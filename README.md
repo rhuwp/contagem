@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 # Contagem PA
 
 Sistema de contagem para Pronto Atendimento (PA) com dashboard administrativo, supervisão de filas e gerenciamento de usuários.
