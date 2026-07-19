@@ -13,6 +13,10 @@ try {
   console.error('❌ Falha ao inicializar o Oracle Thick Mode. Verifique o caminho:', err);
 }
 
+// Pool de conexões: criado uma única vez, reutilizado por todas as requisições.
+// connection.close() devolve a conexão ao pool (não encerra de fato).
+let poolPromise = null;
+
 async function getOracleConnection() {
   // Trava de segurança do .env
   if (!process.env.ORACLE_CONN_STRING) {
@@ -21,13 +25,20 @@ async function getOracleConnection() {
   }
 
   try {
-    const connection = await oracledb.getConnection({
-      user: process.env.ORACLE_USER,
-      password: process.env.ORACLE_PASSWORD,
-      connectString: process.env.ORACLE_CONN_STRING
-    });
-    return connection;
+    if (!poolPromise) {
+      poolPromise = oracledb.createPool({
+        user: process.env.ORACLE_USER,
+        password: process.env.ORACLE_PASSWORD,
+        connectString: process.env.ORACLE_CONN_STRING,
+        poolMin: 0,
+        poolMax: 4,
+        poolIncrement: 1
+      });
+    }
+    const pool = await poolPromise;
+    return await pool.getConnection();
   } catch (erro) {
+    poolPromise = null; // permite nova tentativa na próxima requisição
     console.error('Erro crítico ao conectar no Oracle MV:', erro);
     throw erro;
   }

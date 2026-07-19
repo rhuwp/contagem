@@ -20,6 +20,10 @@ const AdminController = {
       return res.status(400).json({ erro: 'Os campos nome, senha e nível de acesso são obrigatórios.' });
     }
 
+    if (senha.length < 6) {
+      return res.status(400).json({ erro: 'A senha provisória deve ter pelo menos 6 caracteres.' });
+    }
+
     try {
       const identificador = gerarIdentificadorUsuario(nome);
       const salt = await bcrypt.genSalt(10);
@@ -96,7 +100,12 @@ const AdminController = {
   // 3.5. Alternar Status do Utilizador (Ativar/Desativar)
   async alternarStatusUsuario(req, res) {
     const { id } = req.params;
-    
+
+    // SEGURANÇA: impede o admin de desativar o próprio acesso (lock-out)
+    if (String(id) === String(req.usuarioLogado.id)) {
+      return res.status(400).json({ erro: 'Você não pode desativar o seu próprio acesso.' });
+    }
+
     try {
       const resultBusca = await pool.query('SELECT ativo FROM usuarios WHERE id = $1', [id]);
       
@@ -179,6 +188,9 @@ const AdminController = {
       const { rows } = await pool.query(query, valores);
       return res.status(201).json(rows[0]);
     } catch (erro) {
+      if (erro.code === '23505') {
+        return res.status(400).json({ erro: 'Esta queixa já está vinculada a este médico.' });
+      }
       console.error('Erro ao inserir queixa:', erro);
       return res.status(500).json({ erro: 'Falha ao registrar nova queixa no banco de dados.' });
     }

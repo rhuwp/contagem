@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../../lib/axios';
-import { Lock, ShieldAlert } from 'lucide-react';
+import { useModalStore } from '../../../app/store/modalStore';
+import { ShieldAlert } from 'lucide-react';
 
 export default function RedefinirSenhaPage() {
   const [novaSenha, setNovaSenha] = useState('');
@@ -10,19 +11,11 @@ export default function RedefinirSenhaPage() {
   const [loading, setLoading] = useState(false);
   
   const navigate = useNavigate();
-  const location = useLocation();
-  
-  // Recupera o ID do usuário que veio do Login
-  const usuarioId = location.state?.usuarioId;
+  const mostrarModal = useModalStore((state) => state.mostrarModal);
 
   const handleRedefinir = async (e: React.FormEvent) => {
     e.preventDefault();
     setErro('');
-
-    if (!usuarioId) {
-      setErro('Sessão inválida. Volte ao login e tente novamente.');
-      return;
-    }
 
     if (novaSenha !== confirmarSenha) {
       setErro('As senhas não coincidem.');
@@ -37,13 +30,10 @@ export default function RedefinirSenhaPage() {
     setLoading(true);
 
     try {
-      // Chama a rota que criamos no backend
-      await api.post('/auth/redefinir-senha-inicial', { 
-        id: usuarioId, 
-        novaSenha 
-      });
+      // O backend identifica o usuário pelo token JWT (não enviamos o id)
+      await api.post('/auth/redefinir-senha-inicial', { novaSenha });
 
-      alert('Senha atualizada com sucesso! Por favor, faça login com sua nova credencial.');
+      mostrarModal('sucesso', 'Senha Atualizada', 'Faça login novamente com a sua nova credencial.');
       navigate('/'); // Volta para a tela de login
       
     } catch (err: any) {
@@ -63,7 +53,7 @@ export default function RedefinirSenhaPage() {
           </div>
           <h1 className="text-2xl font-bold text-slate-800 text-center">Ação Necessária</h1>
           <p className="text-slate-500 text-sm mt-2 text-center">
-            Este é o seu primeiro acesso ao sistema Contagem PA. Por motivos de segurança e auditoria, você deve definir uma senha pessoal e intransferível.
+            Este é o seu primeiro acesso ao sistema Contagem PA. Por motivos de segurança, você deve definir uma senha pessoal e intransferível.
           </p>
         </div>
 

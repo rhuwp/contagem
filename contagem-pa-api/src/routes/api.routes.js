@@ -13,7 +13,6 @@ const { verificarToken, verificarRole } = require('../middlewares/auth.middlewar
 
 // --- ROTAS ABERTAS ---
 router.post('/auth/login', AuthController.login);
-router.post('/auth/criar-usuario', AuthController.criarUsuario); 
 
 // --- ROTAS PROTEGIDAS (Exige Token) ---
 router.use(verificarToken);
@@ -32,10 +31,12 @@ router.put('/secretaria/cota/:id/cancelar', verificarRole(['secretaria', 'admin'
 // --- ROTAS DO PA ---
 router.post('/pa/encaminhar', verificarRole(['pa', 'admin']), FilaController.encaminharPaciente);
 router.post('/pa/excecao', verificarRole(['pa', 'admin']), FilaController.enviarExcecao);
+router.get('/pa/indicadores', verificarRole(['pa', 'supervisao', 'admin']), SupervisaoController.obterIndicadoresPa);
 
-// --- ROTAS DA SUPERVISÃO --- 
+// --- ROTAS DA SUPERVISÃO ---
 router.get('/supervisao/dashboard', verificarRole(['supervisao', 'admin']), SupervisaoController.obterDashboard);
-router.post('/supervisao/plantao', verificarRole(['supervisao', 'admin']), SupervisaoController.registrarPlantao);
+// Passagem de plantão: usada pela Supervisão e pela recepção do PA (mesmo documento)
+router.post('/supervisao/plantao', verificarRole(['supervisao', 'pa', 'admin']), SupervisaoController.registrarPlantao);
 
 // --- ROTAS DA ADMINISTRAÇÃO (Apenas TI / Admin) ---
 router.get('/admin/usuarios', verificarRole(['admin']), AdminController.listarUsuarios);

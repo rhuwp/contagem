@@ -1,4 +1,3 @@
-
 # Contagem PA
 
 Sistema de contagem para Pronto Atendimento (PA) com dashboard administrativo, supervisão de filas e gerenciamento de usuários.
@@ -66,7 +65,3 @@ npm run dev
 - TypeScript
 - Tailwind CSS
 - Zustand (state management)
-=======
-# contagem
-Sistema de contagem
->>>>>>> fed07083c226187c517723c96e89e7803727ef81

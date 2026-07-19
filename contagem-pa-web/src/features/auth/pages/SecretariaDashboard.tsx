@@ -1,10 +1,13 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../../lib/axios';
 import { useAuthStore } from '../../../app/store/authStore';
+import { useModalStore } from '../../../app/store/modalStore';
 import { LogOut, UserPlus, ClipboardList, Activity, XCircle, Search } from 'lucide-react';
 
 export default function SecretariaDashboard() {
   const { user, logout } = useAuthStore();
+  const mostrarModal = useModalStore((state) => state.mostrarModal);
+  const mostrarConfirmacao = useModalStore((state) => state.mostrarConfirmacao);
   
   const [medicos, setMedicos] = useState<any[]>([]);
   const [cotasAtivas, setCotasAtivas] = useState<any[]>([]);
@@ -16,6 +19,7 @@ export default function SecretariaDashboard() {
   
   // Alterado para aceitar string ou number e não travar a digitação
   const [quantidade, setQuantidade] = useState<number | string>(1);
+  const [filaContinua, setFilaContinua] = useState(false);
   const [observacao, setObservacao] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -38,52 +42,75 @@ export default function SecretariaDashboard() {
 
   const handleAbrirCota = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!medicoSelecionado) return alert('Por favor, pesquise e clique sobre o nome do médico na lista.');
+    if (!medicoSelecionado) {
+      return mostrarModal('aviso', 'Selecione o Médico', 'Pesquise e clique sobre o nome do médico na lista antes de confirmar.');
+    }
     
     const medicoCompleto = medicos.find(m => String(m.id) === String(medicoSelecionado));
-    
+
+    // Impede abrir cota duplicada para um médico que já está na fila
+    const jaTemCota = cotasAtivas.some(c => String(c.medico_id) === String(medicoSelecionado));
+    if (jaTemCota) {
+      return mostrarModal('aviso', 'Médico Já na Fila', 'Este médico já possui uma cota ativa. Cancele a cota atual antes de abrir uma nova.');
+    }
+
+    if (!filaContinua) {
+      const qtd = Number(quantidade);
+      if (!Number.isInteger(qtd) || qtd < 1) {
+        return mostrarModal('aviso', 'Quantidade Inválida', 'Informe um número inteiro maior que zero, ou marque a opção de cota contínua.');
+      }
+    }
+
     setLoading(true);
     try {
       await api.post('/secretaria/cota', {
         medico_id: medicoSelecionado,
         medico_nome: medicoCompleto?.nome || 'Nome Indisponível',
         medico_crm: medicoCompleto?.crm || '',
-        secretaria_id: user?.id,
-        quantidade_solicitada: Number(quantidade), // Converte para número apenas na hora de enviar
+        quantidade_solicitada: filaContinua ? 0 : Number(quantidade),
+        fila_continua: filaContinua,
         observacao: observacao
       });
-      
+
       // Limpa tudo após o sucesso
       setMedicoSelecionado('');
       setBuscaMedico('');
       setQuantidade(1);
+      setFilaContinua(false);
       setObservacao('');
       carregarDados();
-    } catch (error) {
-      alert('Falha na injeção da cota.');
+    } catch (error: any) {
+      mostrarModal('erro', 'Falha ao Abrir Cota', error.response?.data?.erro || 'Não foi possível registrar a cota. Tente novamente.');
       console.error(error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCancelarCota = async (id: string) => {
-    const confirmar = window.confirm('Tem certeza que deseja cancelar e remover este médico da fila do PA?');
-    if (!confirmar) return;
-
-    try {
-      await api.put(`/secretaria/cota/${id}/cancelar`);
-      carregarDados();
-    } catch (error) {
-      alert('Falha ao processar o cancelamento.');
-    }
+  const handleCancelarCota = (id: string) => {
+    mostrarConfirmacao(
+      'Remover Médico da Fila',
+      'Tem certeza que deseja cancelar esta cota e remover o médico da fila do PA?',
+      async () => {
+        try {
+          await api.put(`/secretaria/cota/${id}/cancelar`);
+          carregarDados();
+        } catch (error: any) {
+          mostrarModal('erro', 'Falha no Cancelamento', error.response?.data?.erro || 'Não foi possível cancelar a cota.');
+        }
+      }
+    );
   };
 
-  // Filtra a lista de médicos conforme você digita (pelo Nome ou CRM)
-  const medicosFiltrados = medicos.filter(m => 
-    m.nome.toLowerCase().includes(buscaMedico.toLowerCase()) || 
-    (m.crm && m.crm.toLowerCase().includes(buscaMedico.toLowerCase()))
-  );
+  // Filtra a lista de médicos conforme você digita (pelo Nome ou CRM).
+  // Com um médico já selecionado, o campo contém "NOME (CRM: ...)" — texto que não casaria
+  // com o filtro. Nesse caso mostramos a lista completa (com o selecionado em destaque).
+  const medicosFiltrados = medicoSelecionado
+    ? medicos
+    : medicos.filter(m =>
+        m.nome.toLowerCase().includes(buscaMedico.toLowerCase()) ||
+        (m.crm && m.crm.toLowerCase().includes(buscaMedico.toLowerCase()))
+      );
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col">
@@ -101,7 +128,7 @@ export default function SecretariaDashboard() {
         <div className="flex items-center gap-4">
           <div className="text-right">
             <p className="text-sm font-semibold text-slate-800">{user?.nome}</p>
-            <p className="text-xs text-slate-500">{user?.email}</p>
+            <p className="text-xs text-slate-500">{user?.usuario}</p>
           </div>
           <button 
             onClick={logout}
@@ -174,18 +201,37 @@ export default function SecretariaDashboard() {
                 )}
               </div>
 
-              {/* CAMPO DE VOLUME CORRIGIDO */}
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Volume Solicitado (Unimed)</label>
-                <input 
-                  type="number" 
-                  min="1"
-                  value={quantidade}
-                  onChange={(e) => setQuantidade(e.target.value)} // Não força o tipo aqui
-                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none"
-                  required
+              {/* COTA CONTÍNUA: médico fica sempre na fila, sem limite de vagas */}
+              <div className="flex items-start gap-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                <input
+                  type="checkbox"
+                  id="filaContinua"
+                  checked={filaContinua}
+                  onChange={(e) => setFilaContinua(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-blue-600 cursor-pointer"
                 />
+                <label htmlFor="filaContinua" className="cursor-pointer">
+                  <span className="block text-sm font-semibold text-slate-800">Manter sempre na fila (cota contínua)</span>
+                  <span className="block text-xs text-slate-500 mt-0.5">
+                    O médico permanece no rodízio sem limite de vagas até esta cota ser cancelada. Ideal para plantões dedicados (ex: noite inteira em Contagem).
+                  </span>
+                </label>
               </div>
+
+              {/* CAMPO DE VOLUME (oculto quando a cota é contínua) */}
+              {!filaContinua && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Volume Solicitado (Unimed)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={quantidade}
+                    onChange={(e) => setQuantidade(e.target.value)} // Não força o tipo aqui
+                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none"
+                    required
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Parâmetros/Observações</label>
@@ -238,24 +284,46 @@ export default function SecretariaDashboard() {
                       <tr key={cota.id} className="border-b hover:bg-slate-50 transition-colors">
                         <td className="p-3">
                           <p className="font-semibold text-slate-800">{cota.medico_nome}</p>
+                          {cota.secretaria_nome && (
+                            <p className="text-xs text-slate-400 mt-0.5">Aberta por: {cota.secretaria_nome}</p>
+                          )}
                           {cota.observacao && <p className="text-xs text-slate-500 mt-1">{cota.observacao}</p>}
                         </td>
                         <td className="p-3 text-center">
-                          <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded-full text-xs font-bold">
-                            {cota.status}
-                          </span>
+                          {cota.fila_continua ? (
+                            <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded-full text-xs font-bold">
+                              CONTÍNUA
+                            </span>
+                          ) : (
+                            <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded-full text-xs font-bold">
+                              {cota.status}
+                            </span>
+                          )}
                         </td>
                         <td className="p-3 text-center font-bold text-slate-800 text-lg">
-                          {cota.quantidade_solicitada - cota.quantidade_restante} <span className="text-slate-400 text-sm">/ {cota.quantidade_solicitada}</span>
+                          {cota.fila_continua ? (
+                            <>{cota.total_encaminhados ?? 0} <span className="text-slate-400 text-sm">/ ∞</span></>
+                          ) : (
+                            <>{cota.quantidade_solicitada - cota.quantidade_restante} <span className="text-slate-400 text-sm">/ {cota.quantidade_solicitada}</span></>
+                          )}
                         </td>
                         <td className="p-3 text-center">
-                          <button 
-                            onClick={() => handleCancelarCota(cota.id)}
-                            className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-full transition-colors"
-                            title="Remover Médico da Fila"
-                          >
-                            <XCircle className="w-5 h-5" />
-                          </button>
+                          {String(cota.secretaria_id) === String(user?.id) ? (
+                            <button
+                              onClick={() => handleCancelarCota(cota.id)}
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-full transition-colors"
+                              title="Remover Médico da Fila"
+                            >
+                              <XCircle className="w-5 h-5" />
+                            </button>
+                          ) : (
+                            <span
+                              className="inline-block p-2 text-slate-300 cursor-not-allowed"
+                              title={`Somente ${cota.secretaria_nome || 'quem abriu a cota'} pode cancelá-la`}
+                            >
+                              <XCircle className="w-5 h-5" />
+                            </span>
+                          )}
                         </td>
                       </tr>
                     ))}

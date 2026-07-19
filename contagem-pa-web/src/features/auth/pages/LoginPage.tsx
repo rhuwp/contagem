@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../../lib/axios';
 import { useAuthStore } from '../../../app/store/authStore';
+import { useModalStore } from '../../../app/store/modalStore';
 import { Lock } from 'lucide-react';
 
 export default function LoginPage() {
@@ -12,6 +13,7 @@ export default function LoginPage() {
   
   const navigate = useNavigate();
   const login = useAuthStore((state) => state.login);
+  const mostrarModal = useModalStore((state) => state.mostrarModal);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault(); // Evita que a página recarregue
@@ -28,8 +30,8 @@ export default function LoginPage() {
 
       // 1. VERIFICAÇÃO DE PRIMEIRO ACESSO (Obriga a trocar a senha)
       if (dadosUsuario.trocar_senha) {
-        alert('Este é seu primeiro acesso corporativo. Por segurança, altere a senha provisória.');
-        navigate('/redefinir-senha', { state: { usuarioId: dadosUsuario.id } });
+        mostrarModal('aviso', 'Primeiro Acesso', 'Por segurança, você deve alterar a senha provisória antes de continuar.');
+        navigate('/redefinir-senha');
         return; // Para a execução aqui para não redirecionar para a dashboard ainda
       }
 

@@ -3,10 +3,12 @@ const pool = require('../config/databasePg');
 const FilaController = {
   // FLUXO NORMAL
   async encaminharPaciente(req, res) {
-    const { usuario_pa_id, paciente_identificador } = req.body;
-    
-    if (!usuario_pa_id || !paciente_identificador) {
-      return res.status(400).json({ erro: 'Dados do paciente ou operador ausentes.' });
+    const { paciente_identificador } = req.body;
+    // SEGURANÇA: o operador é identificado pelo token, não pelo body (evita log forjado)
+    const usuario_pa_id = req.usuarioLogado.id;
+
+    if (!paciente_identificador) {
+      return res.status(400).json({ erro: 'Identificação do paciente ausente.' });
     }
 
     const client = await pool.connect();
@@ -19,12 +21,13 @@ const FilaController = {
       const usuarioNome = userRows[0]?.nome || 'Operador Desconhecido';
 
       // 2. Busca o médico no topo do rodízio
+      // Cota contínua participa do rodízio sem limite de vagas
       const queryBusca = `
-        SELECT id, medico_id, medico_nome, quantidade_restante 
-        FROM pedidos_cota 
-        WHERE status = 'ABERTO' AND quantidade_restante > 0 
-        ORDER BY ultimo_encaminhamento_em ASC NULLS FIRST, criado_em ASC 
-        LIMIT 1 
+        SELECT id, medico_id, medico_nome, quantidade_restante, fila_continua
+        FROM pedidos_cota
+        WHERE status = 'ABERTO' AND (fila_continua = TRUE OR quantidade_restante > 0)
+        ORDER BY ultimo_encaminhamento_em ASC NULLS FIRST, criado_em ASC
+        LIMIT 1
         FOR UPDATE;
       `;
       const { rows } = await client.query(queryBusca);
@@ -35,15 +38,25 @@ const FilaController = {
       }
 
       const pedidoAtual = rows[0];
-      const novaQuantidade = pedidoAtual.quantidade_restante - 1;
-      const novoStatus = novaQuantidade === 0 ? 'CONCLUIDO' : 'ABERTO';
 
-      // 3. Atualiza cota e timestamp de rodízio
-      await client.query(`
-        UPDATE pedidos_cota 
-        SET quantidade_restante = $1, status = $2, ultimo_encaminhamento_em = NOW(), atualizado_em = NOW()
-        WHERE id = $3
-      `, [novaQuantidade, novoStatus, pedidoAtual.id]);
+      if (pedidoAtual.fila_continua) {
+        // 3a. Cota contínua: só gira o rodízio, nunca decrementa nem conclui
+        await client.query(`
+          UPDATE pedidos_cota
+          SET ultimo_encaminhamento_em = NOW(), atualizado_em = NOW()
+          WHERE id = $1
+        `, [pedidoAtual.id]);
+      } else {
+        // 3b. Cota normal: decrementa e conclui ao zerar
+        const novaQuantidade = pedidoAtual.quantidade_restante - 1;
+        const novoStatus = novaQuantidade === 0 ? 'CONCLUIDO' : 'ABERTO';
+
+        await client.query(`
+          UPDATE pedidos_cota
+          SET quantidade_restante = $1, status = $2, ultimo_encaminhamento_em = NOW(), atualizado_em = NOW()
+          WHERE id = $3
+        `, [novaQuantidade, novoStatus, pedidoAtual.id]);
+      }
 
       // 4. Registra log legível para auditoria
       await client.query(`
@@ -71,8 +84,10 @@ const FilaController = {
 
   // FLUXO EXCEÇÃO
   async enviarExcecao(req, res) {
-    const { usuario_pa_id, pedido_cota_id, paciente_identificador, justificativa } = req.body;
-    
+    const { pedido_cota_id, paciente_identificador, justificativa } = req.body;
+    // SEGURANÇA: o operador é identificado pelo token, não pelo body (evita log forjado)
+    const usuario_pa_id = req.usuarioLogado.id;
+
     if (!justificativa || !pedido_cota_id) {
       return res.status(400).json({ erro: 'Dados de exceção incompletos.' });
     }

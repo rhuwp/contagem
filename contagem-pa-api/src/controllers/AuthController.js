@@ -2,15 +2,6 @@ const pool = require('../config/databasePg');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
-// Função auxiliar para normalizar e extrair "nome.sobrenome"
-function gerarIdentificadorUsuario(nomeCompleto) {
-  const stringNormalizada = nomeCompleto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-  const partes = stringNormalizada.split(/\s+/);
-  
-  if (partes.length === 1) return partes[0];
-  return `${partes[0]}.${partes[partes.length - 1]}`;
-}
-
 const AuthController = {
   // 1. Rota de Login com Verificação de Primeiro Acesso
   async login(req, res) {
@@ -63,8 +54,11 @@ const AuthController = {
   },
 
   // 2. Rota para Alterar Senha (Obrigatório no Primeiro Acesso)
+  // SEGURANÇA: o id vem do token JWT (req.usuarioLogado), nunca do body,
+  // para impedir que um usuário troque a senha de outro (IDOR).
   async alterarSenhaPrimeiroAcesso(req, res) {
-    const { id, novaSenha } = req.body;
+    const { novaSenha } = req.body;
+    const id = req.usuarioLogado.id;
 
     if (!novaSenha || novaSenha.length < 6) {
       return res.status(400).json({ erro: 'A nova senha deve ter no mínimo 6 caracteres.' });
@@ -91,43 +85,6 @@ const AuthController = {
     } catch (erro) {
       console.error('Erro ao trocar senha inicial:', erro);
       return res.status(500).json({ erro: 'Falha ao atualizar senha.' });
-    }
-  },
-
-  // 3. Rota para criar um usuário (Configuração/Lote)
-  async criarUsuario(req, res) {
-    const { nome, senha, role } = req.body;
-
-    if (!nome || !senha || !role) {
-      return res.status(400).json({ erro: 'Os campos nome, senha e role são obrigatórios.' });
-    }
-
-    try {
-      const identificador = gerarIdentificadorUsuario(nome);
-      
-      const salt = await bcrypt.genSalt(10);
-      const senha_hash = await bcrypt.hash(senha, salt);
-
-      // Inserção forçando trocar_senha como TRUE por padrão
-      const query = `
-        INSERT INTO usuarios (nome, usuario, senha_hash, role, trocar_senha) 
-        VALUES ($1, $2, $3, $4, TRUE) 
-        RETURNING id, nome, usuario, role;
-      `;
-      
-      const { rows } = await pool.query(query, [nome, identificador, senha_hash, role]);
-      
-      return res.status(201).json({
-        mensagem: 'Utilizador criado com sucesso. Troca de senha obrigatória no primeiro acesso.',
-        usuario: rows[0]
-      });
-
-    } catch (erro) {
-      console.error('Erro ao criar usuario:', erro);
-      if (erro.code === '23505') {
-        return res.status(400).json({ erro: 'Este identificador de utilizador já está em uso.' });
-      }
-      return res.status(500).json({ erro: 'Falha ao criar utilizador.' });
     }
   }
 };

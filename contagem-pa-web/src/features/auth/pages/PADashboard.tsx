@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../../lib/axios';
 import { useAuthStore } from '../../../app/store/authStore';
-import { LogOut, Users, ArrowRightCircle, AlertTriangle, Stethoscope, Search, ChevronDown, ChevronUp } from 'lucide-react';
+import { useModalStore } from '../../../app/store/modalStore';
+import PassagemPlantao from '../../../components/PassagemPlantao';
+import { LogOut, Users, ArrowRightCircle, AlertTriangle, Stethoscope, Search, ChevronDown, ChevronUp, ClipboardCheck } from 'lucide-react';
 
 // ==========================================
 // 1. MOTOR DE CLASSIFICAÇÃO OTORRINO (TAXONOMIA)
@@ -91,10 +93,15 @@ const QueixasViewer = ({ queixas }: { queixas: string[] }) => {
 // ==========================================
 export default function PADashboard() {
   const { user, logout } = useAuthStore();
-  
+  const mostrarModal = useModalStore((state) => state.mostrarModal);
+
   const [fila, setFila] = useState<any[]>([]);
   const [medicosCatalogo, setMedicosCatalogo] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Indicadores do dia (medianas) e navegação Despacho / Plantão
+  const [indicadores, setIndicadores] = useState<any>(null);
+  const [visao, setVisao] = useState<'despacho' | 'plantao'>('despacho');
 
   // Estados dos formulários
   const [identificadorPaciente, setIdentificadorPaciente] = useState('');
@@ -109,9 +116,20 @@ export default function PADashboard() {
   useEffect(() => {
     carregarMedicosCatalogo();
     carregarFila();
+    carregarIndicadores();
     const intervalo = setInterval(carregarFila, 5000);
-    return () => clearInterval(intervalo);
+    const intervaloInd = setInterval(carregarIndicadores, 60000);
+    return () => { clearInterval(intervalo); clearInterval(intervaloInd); };
   }, []);
+
+  const carregarIndicadores = async () => {
+    try {
+      const response = await api.get('/pa/indicadores');
+      setIndicadores(response.data);
+    } catch (error) {
+      console.error("Erro ao carregar indicadores do PA:", error);
+    }
+  };
 
   const carregarMedicosCatalogo = async () => {
     try {
@@ -125,7 +143,7 @@ export default function PADashboard() {
   const carregarFila = async () => {
     try {
       const response = await api.get('/secretaria/cotas-ativas');
-      const filaAtiva = response.data.filter((c: any) => c.status === 'ABERTO' && c.quantidade_restante > 0);
+      const filaAtiva = response.data.filter((c: any) => c.status === 'ABERTO' && (c.fila_continua || c.quantidade_restante > 0));
       setFila(filaAtiva);
     } catch (error) {
       console.error("Erro ao carregar a fila:", error);
@@ -139,15 +157,14 @@ export default function PADashboard() {
     setLoading(true);
     try {
       const response = await api.post('/pa/encaminhar', {
-        usuario_pa_id: user?.id,
         paciente_identificador: identificadorPaciente
       });
       
-      alert(`Encaminhado com sucesso para:\nDr(a). ${response.data.medico_nome || 'Médico do Rodízio'}`);
+      mostrarModal('sucesso', 'Paciente Encaminhado', `Dr(a). ${response.data.medico_nome || 'Médico do Rodízio'}`);
       setIdentificadorPaciente('');
       carregarFila();
     } catch (error: any) {
-      alert(error.response?.data?.erro || 'Erro ao encaminhar paciente. A fila pode estar vazia.');
+      mostrarModal('erro', 'Falha no Encaminhamento', error.response?.data?.erro || 'Erro ao encaminhar paciente. A fila pode estar vazia.');
     } finally {
       setLoading(false);
     }
@@ -155,18 +172,19 @@ export default function PADashboard() {
 
   const handleEncaminharExcecao = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cotaExcecaoId) return alert('Selecione o médico de destino para a exceção na lista suspensa.');
+    if (!cotaExcecaoId) {
+      return mostrarModal('aviso', 'Selecione o Médico', 'Escolha o médico de destino para a exceção na lista suspensa.');
+    }
 
     setLoading(true);
     try {
       await api.post('/pa/excecao', {
-        usuario_pa_id: user?.id,
         pedido_cota_id: cotaExcecaoId,
         paciente_identificador: identificadorPaciente,
         justificativa: justificativa
       });
       
-      alert('Paciente encaminhado por exceção com sucesso! O médico foi movido para o final do rodízio.');
+      mostrarModal('sucesso', 'Exceção Registrada', 'Paciente encaminhado. O médico foi movido para o final do rodízio.');
       setIdentificadorPaciente('');
       setCotaExcecaoId('');
       setBuscaMedico('');
@@ -174,7 +192,7 @@ export default function PADashboard() {
       setModoExcecao(false);
       carregarFila();
     } catch (error: any) {
-      alert(error.response?.data?.erro || 'Erro ao registar exceção.');
+      mostrarModal('erro', 'Falha na Exceção', error.response?.data?.erro || 'Erro ao registar exceção.');
     } finally {
       setLoading(false);
     }
@@ -189,10 +207,14 @@ export default function PADashboard() {
     };
   });
 
-  const filaFiltradaExcecao = filaEnriquecida.filter(c => 
-    c.medico_nome.toLowerCase().includes(buscaMedico.toLowerCase()) || 
-    (c.queixas && c.queixas.some((q: string) => q.toLowerCase().includes(buscaMedico.toLowerCase())))
-  );
+  // Com um médico já selecionado, o campo contém "Dr(a). NOME" — texto que não casaria
+  // com o filtro. Nesse caso mostramos a fila completa (com o selecionado em destaque).
+  const filaFiltradaExcecao = cotaExcecaoId
+    ? filaEnriquecida
+    : filaEnriquecida.filter(c =>
+        c.medico_nome.toLowerCase().includes(buscaMedico.toLowerCase()) ||
+        (c.queixas && c.queixas.some((q: string) => q.toLowerCase().includes(buscaMedico.toLowerCase())))
+      );
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
@@ -203,7 +225,7 @@ export default function PADashboard() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-slate-800">Pronto Atendimento (PA)</h1>
-            <p className="text-sm text-slate-500">Distribuição de Senhas e Motor de Rodízio</p>
+            <p className="text-sm text-slate-500">Distribuição de Senhas</p>
           </div>
         </div>
         
@@ -222,14 +244,46 @@ export default function PADashboard() {
         </div>
       </header>
 
-      <main className="flex-1 p-8 grid grid-cols-1 lg:grid-cols-12 gap-8 max-w-[1600px] mx-auto w-full">
-        
+      <main className="flex-1 p-8 max-w-[1600px] mx-auto w-full space-y-6">
+
+        {/* Indicadores do dia (medianas do MV) */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <MiniIndicador titulo="Atendimentos Hoje" valor={indicadores?.totalAtendimentos} unidade="" />
+          <MiniIndicador titulo="Espera Recepção" valor={indicadores?.tempos?.esperaRecepcao} unidade="min" />
+          <MiniIndicador titulo="Tempo Cadastro" valor={indicadores?.tempos?.cadastro} unidade="min" />
+          <MiniIndicador titulo="Espera Médica" valor={indicadores?.tempos?.esperaMedica} unidade="min" />
+          <MiniIndicador titulo="Permanência Total" valor={indicadores?.tempos?.permanenciaTotal} unidade="min" />
+        </div>
+
+        {/* Mini navbar: Despacho / Passagem de Plantão */}
+        <div className="inline-flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+          <button
+            onClick={() => setVisao('despacho')}
+            className={`px-5 py-2 text-sm font-bold rounded-lg flex items-center gap-2 transition-all ${
+              visao === 'despacho' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <ArrowRightCircle className="w-4 h-4" /> Fila de Rodízio
+          </button>
+          <button
+            onClick={() => setVisao('plantao')}
+            className={`px-5 py-2 text-sm font-bold rounded-lg flex items-center gap-2 transition-all ${
+              visao === 'plantao' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <ClipboardCheck className="w-4 h-4" /> Passagem de Plantão
+          </button>
+        </div>
+
+        {visao === 'despacho' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
         {/* Painel de Despacho */}
         <div className="lg:col-span-4 space-y-6">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
             <h2 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
               <ArrowRightCircle className="text-slate-800 w-5 h-5" />
-              Painel de Despacho
+              Painel 
             </h2>
 
             <div className="flex p-1 bg-slate-100 rounded-lg mb-6 border border-slate-200">
@@ -344,7 +398,7 @@ export default function PADashboard() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Justificativa Operacional</label>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Justificativa </label>
                   <textarea 
                     value={justificativa}
                     onChange={(e) => setJustificativa(e.target.value)}
@@ -372,7 +426,7 @@ export default function PADashboard() {
             <div className="flex items-center justify-between mb-6 border-b pb-4">
               <div className="flex items-center gap-2">
                 <Stethoscope className="text-slate-800 w-5 h-5" />
-                <h2 className="text-lg font-bold text-slate-800">Cadeia de Alocação</h2>
+                <h2 className="text-lg font-bold text-slate-800">Fila de Rodízio</h2>
               </div>
               <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1 rounded-full border border-slate-200">
                 {filaEnriquecida.length} Recursos Disponíveis
@@ -405,9 +459,16 @@ export default function PADashboard() {
                         </div>
                         
                         <div className="flex-1">
-                          <h3 className={`font-bold ${index === 0 ? 'text-slate-900 text-lg' : 'text-slate-700 text-base'}`}>
-                            {cota.medico_nome}
-                          </h3>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className={`font-bold ${index === 0 ? 'text-slate-900 text-lg' : 'text-slate-700 text-base'}`}>
+                              {cota.medico_nome}
+                            </h3>
+                            {cota.fila_continua && (
+                              <span className="bg-purple-50 text-purple-700 border border-purple-200 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
+                                Contínua
+                              </span>
+                            )}
+                          </div>
                           
                           {/* Substituição pela Taxonomia Estruturada */}
                           <QueixasViewer queixas={cota.queixas} />
@@ -426,7 +487,7 @@ export default function PADashboard() {
                         <div className={`w-12 h-12 rounded-full flex items-center justify-center font-black text-xl border-4 ${
                           index === 0 ? 'border-slate-800 text-slate-800' : 'border-slate-200 text-slate-500'
                         }`}>
-                          {cota.quantidade_restante}
+                          {cota.fila_continua ? '∞' : cota.quantidade_restante}
                         </div>
                       </div>
                     </div>
@@ -437,7 +498,40 @@ export default function PADashboard() {
           </div>
         </div>
 
+        </div>
+        ) : (
+          <div className="max-w-2xl">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <h2 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2 border-b pb-4">
+                <ClipboardCheck className="text-slate-800 w-5 h-5" /> Fila de Rodízio
+              </h2>
+              <PassagemPlantao
+                cor="slate"
+                linhasIndicadores={[
+                  `- Atendimentos no dia: ${indicadores?.totalAtendimentos || 0}`,
+                  `- Espera Recepcao (mediana): ${indicadores?.tempos?.esperaRecepcao || 0} min`,
+                  `- Tempo de Cadastro (mediana): ${indicadores?.tempos?.cadastro || 0} min`,
+                  `- Espera Medica (mediana): ${indicadores?.tempos?.esperaMedica || 0} min`,
+                  `- Permanencia Total (mediana): ${indicadores?.tempos?.permanenciaTotal || 0} min`,
+                ]}
+              />
+            </div>
+          </div>
+        )}
       </main>
+    </div>
+  );
+}
+
+// Card compacto de indicador (medianas do dia vindas do MV)
+function MiniIndicador({ titulo, valor, unidade }: any) {
+  return (
+    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-center">
+      <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">{titulo}</p>
+      <p className="text-2xl font-black text-slate-800">
+        {valor ?? '-'}
+        {unidade && <span className="text-xs font-medium text-slate-400 ml-1">{unidade}</span>}
+      </p>
     </div>
   );
 }

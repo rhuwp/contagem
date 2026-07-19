@@ -1,24 +1,19 @@
 import { useState, useEffect } from 'react';
 import { api } from '../../../lib/axios';
 import { useAuthStore } from '../../../app/store/authStore';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import { 
-  LogOut, Activity, AlertCircle, ClipboardCheck, 
-  Calendar, Timer, UserCheck, Stethoscope, Hourglass, RefreshCw, FileDown,
-  Building, PieChart
+import PassagemPlantao from '../../../components/PassagemPlantao';
+import {
+  LogOut, Activity, AlertCircle, ClipboardCheck,
+  Calendar, Timer, UserCheck, Stethoscope, Hourglass, RefreshCw,
+  Building, PieChart, ChevronDown, ChevronUp
 } from 'lucide-react';
 
 export default function SupervisaoDashboard() {
   const { user, logout } = useAuthStore();
   const [dados, setDados] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  
+
   const [dataFiltro, setDataFiltro] = useState(new Date().toLocaleDateString('en-CA'));
-  const [turno, setTurno] = useState('Manha');
-  const [pendencias, setPendencias] = useState('');
-  const [intercorrencias, setIntercorrencias] = useState('');
-  const [observacoes, setObservacoes] = useState('');
 
   useEffect(() => {
     carregarDashboard();
@@ -39,60 +34,6 @@ export default function SupervisaoDashboard() {
       console.error("Erro ao carregar dashboard:", error);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const gerarPDFPlantao = () => {
-    const doc = new jsPDF() as any;
-    const dataHora = new Date().toLocaleString();
-    const nomeSupervisor = user?.nome || 'Sistema (Não Identificado)';
-
-    doc.setFontSize(18);
-    doc.text('Relatorio de Passagem de Plantao - IPO', 14, 20);
-    doc.setFontSize(10);
-    doc.text(`Gerado em: ${dataHora} | Supervisor: ${nomeSupervisor}`, 14, 28);
-    doc.line(14, 32, 196, 32);
-
-    autoTable(doc, {
-      startY: 40,
-      head: [['Campo', 'Informacao']],
-      body: [
-        ['Turno', turno],
-        ['Supervisor Responsavel', nomeSupervisor],
-        ['Pendencias', pendencias || 'Nenhuma informada'],
-        ['Intercorrencias', intercorrencias || 'Nenhuma informada'],
-        ['Observacoes Gerais', observacoes || 'Nenhuma informada'],
-      ],
-      theme: 'grid',
-      headStyles: { fillColor: [126, 34, 206] }, 
-    });
-
-    const finalY = doc.lastAutoTable.finalY + 10;
-    
-    doc.setFontSize(14);
-    doc.text('Indicadores do Hospital no Fechamento:', 14, finalY);
-    doc.setFontSize(10);
-    doc.text(`- Atendimentos Totais (MV): ${dados?.hospitalGlobal?.totalAtendimentosHoje || 0}`, 14, finalY + 8);
-    doc.text(`- Medicos Ativos: ${dados?.hospitalGlobal?.medicosLogados || 0}`, 14, finalY + 14);
-    doc.text(`- Permanencia Media Total: ${dados?.hospitalGlobal?.temposProcesso?.permanenciaTotal || 0} min`, 14, finalY + 20);
-    doc.text(`- Excecoes Registradas no Rodizio: ${dados?.rodizio?.excecoesGeradas || 0}`, 14, finalY + 26);
-
-    doc.save(`Plantao_IPO_${dataFiltro}_${turno}.pdf`);
-  };
-
-  const handleRegistrarPlantao = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user?.id) return alert("Erro de Sessão: O seu utilizador não foi reconhecido.");
-
-    try {
-      await api.post('/supervisao/plantao', { 
-        supervisor_id: user.id, turno, pendencias, intercorrencias, observacoes 
-      });
-      gerarPDFPlantao();
-      alert('Passagem de plantão consolidada e PDF gerado com sucesso!');
-      setPendencias(''); setIntercorrencias(''); setObservacoes('');
-    } catch (error: any) {
-      alert(`Erro ao registar plantão: ${error.response?.data?.erro || error.message}`);
     }
   };
 
@@ -137,23 +78,36 @@ export default function SupervisaoDashboard() {
       <main className="p-8 max-w-[1600px] mx-auto w-full space-y-8">
         
         {/* CARDS PRINCIPAIS: INDICADORES GLOBAIS */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <StatCard title="Total Atendimentos" value={dados?.hospitalGlobal?.totalAtendimentosHoje} subtitle={`PA: ${dados?.hospitalGlobal?.pacientesPA || 0} | Cont: ${dados?.hospitalGlobal?.pacientesContagem || 0}`} color="blue" />
-          <StatCard title="Médicos no Plantão" 
-  value={dados?.hospitalGlobal?.medicosLogados} 
-  subtitle={`PA: ${dados?.hospitalGlobal?.medicosPA || 0} | Cont: ${dados?.hospitalGlobal?.medicosContagem || 0}`} 
-  color="emerald" 
-/>
-          <StatCard title="Cotas de Rodízio" value={dados?.rodizio?.cotasAtivas} subtitle="Injetadas pela Secretaria" color="purple" />
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+          <StatCard
+            title="Total Atendimentos"
+            value={dados?.hospitalGlobal?.totalAtendimentos?.total}
+            subtitle={`PA: ${dados?.hospitalGlobal?.totalAtendimentos?.pa || 0} | Cont: ${dados?.hospitalGlobal?.totalAtendimentos?.contagem || 0} | PA3: ${dados?.hospitalGlobal?.totalAtendimentos?.pa3 || 0}`}
+            color="blue"
+          />
+          <StatCard
+            title="Médicos no Plantão"
+            value={dados?.hospitalGlobal?.medicosAtivos?.total}
+            subtitle={`PA: ${dados?.hospitalGlobal?.medicosAtivos?.pa || 0} | Cont: ${dados?.hospitalGlobal?.medicosAtivos?.contagem || 0} | PA3: ${dados?.hospitalGlobal?.medicosAtivos?.pa3 || 0}`}
+            color="emerald"
+          />
+          <StatCard title="Cotas de Rodízio" value={dados?.rodizio?.cotasAtivas} subtitle="Abertas neste momento" color="purple" />
           <StatCard title="Exceções (Furos)" value={dados?.rodizio?.excecoesGeradas} subtitle="Registradas neste dia" color="red" />
+          <StatCard title="Pacientes Atendidos" value={dados?.rodizio?.pacientesAtendidos} subtitle="Sistema de Rodízio PA" color="amber" />
         </div>
 
         {/* INDICADORES DE SLA (TEMPOS MÉDIOS) */}
         <section className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
-          <div className="flex items-center gap-3 mb-8">
+          <div className="flex items-center gap-3 mb-4">
             <Timer className="text-purple-600 w-6 h-6" />
-            <h2 className="text-xl font-bold text-slate-800">Tempos Médios do Processo (Minutos) - SLA Hospitalar</h2>
+            <h2 className="text-xl font-bold text-slate-800">Tempos de Processo — Mediana (Minutos) · SLA Hospitalar</h2>
           </div>
+          {(dados?.hospitalGlobal?.temposProcesso?.registrosSuspeitos || 0) > 0 && (
+            <div className="mb-6 bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold px-4 py-2 rounded-lg inline-flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              {dados.hospitalGlobal.temposProcesso.registrosSuspeitos} registro(s) com apontamento suspeito (etapa &gt; 4h) — provável atendimento não encerrado no MV
+            </div>
+          )}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-8">
             <SLABadge label="Espera Recepção" value={dados?.hospitalGlobal?.temposProcesso?.esperaRecepcao} icon={<Hourglass />} />
             <SLABadge label="Tempo Cadastro" value={dados?.hospitalGlobal?.temposProcesso?.cadastro} icon={<UserCheck />} />
@@ -164,6 +118,42 @@ export default function SupervisaoDashboard() {
               <p className="text-4xl font-black text-white">{dados?.hospitalGlobal?.temposProcesso?.permanenciaTotal || 0}<span className="text-lg ml-1 font-normal opacity-50">min</span></p>
             </div>
           </div>
+        </section>
+
+        {/* FLUXO POR HORA + DETALHE DA PERMANÊNCIA TOTAL */}
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+            <div className="flex items-center gap-3 mb-8">
+              <Activity className="text-purple-600 w-6 h-6" />
+              <h2 className="text-xl font-bold text-slate-800">Fluxo de Chegadas por Hora</h2>
+            </div>
+            <FluxoHorarioChart dados={dados?.hospitalGlobal?.fluxoHorario || []} />
+          </div>
+
+          <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+            <div className="flex items-center gap-3 mb-8">
+              <Hourglass className="text-purple-600 w-6 h-6" />
+              <h2 className="text-xl font-bold text-slate-800">Permanência Total</h2>
+            </div>
+            <PermanenciaDetalhe
+              detalhe={dados?.hospitalGlobal?.permanenciaDetalhe}
+              mediana={dados?.hospitalGlobal?.temposProcesso?.permanenciaTotal}
+            />
+          </div>
+        </section>
+
+        {/* PRODUÇÃO POR MÉDICO */}
+        <section className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <UserCheck className="text-purple-600 w-6 h-6" />
+              <h2 className="text-xl font-bold text-slate-800">Produção por Médico</h2>
+            </div>
+            <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1 rounded-full border border-slate-200">
+              {dados?.producaoMedicos?.length || 0} médico(s) no dia
+            </span>
+          </div>
+          <MedicosProducao lista={dados?.producaoMedicos} />
         </section>
 
         {/* NOVA SEÇÃO: TOP 10 CONVÊNIOS E CID */}
@@ -192,19 +182,15 @@ export default function SupervisaoDashboard() {
             <h2 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2 border-b pb-4">
               <ClipboardCheck className="text-purple-600 w-5 h-5" /> Formulário de Passagem de Plantão
             </h2>
-            <form onSubmit={handleRegistrarPlantao} className="space-y-4">
-              <select value={turno} onChange={(e) => setTurno(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-lg bg-slate-50 outline-none focus:ring-2 focus:ring-purple-500 font-medium">
-                <option value="Manha">Turno da Manhã</option>
-                <option value="Tarde">Turno da Tarde</option>
-                <option value="Noite">Turno da Noite</option>
-              </select>
-              <textarea value={pendencias} onChange={e => setPendencias(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-lg h-24 outline-none focus:ring-2 focus:ring-purple-500" placeholder="Ex: Pendências, exames aguardando autorização..." />
-              <textarea value={intercorrencias} onChange={e => setIntercorrencias(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-lg h-24 outline-none focus:ring-2 focus:ring-purple-500" placeholder="Ex: Intercorrências, falhas de sistema, falta de médicos..." />
-              <textarea value={observacoes} onChange={e => setObservacoes(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-lg h-24 outline-none focus:ring-2 focus:ring-purple-500" placeholder="Observações gerais do turno..." />
-              <button type="submit" className="w-full bg-purple-600 text-white font-bold py-4 rounded-lg shadow-md hover:bg-purple-700 transition-colors text-lg mt-2 flex items-center justify-center gap-2">
-                <FileDown className="w-5 h-5" /> Submeter e Gerar Relatório PDF
-              </button>
-            </form>
+            <PassagemPlantao
+              cor="purple"
+              linhasIndicadores={[
+                `- Atendimentos Totais: ${dados?.hospitalGlobal?.totalAtendimentos?.total || 0} (PA: ${dados?.hospitalGlobal?.totalAtendimentos?.pa || 0}, Contagem: ${dados?.hospitalGlobal?.totalAtendimentos?.contagem || 0}, PA3: ${dados?.hospitalGlobal?.totalAtendimentos?.pa3 || 0})`,
+                `- Medicos Ativos: ${dados?.hospitalGlobal?.medicosAtivos?.total || 0} (PA: ${dados?.hospitalGlobal?.medicosAtivos?.pa || 0}, Contagem: ${dados?.hospitalGlobal?.medicosAtivos?.contagem || 0}, PA3: ${dados?.hospitalGlobal?.medicosAtivos?.pa3 || 0})`,
+                `- Permanencia Mediana Total: ${dados?.hospitalGlobal?.temposProcesso?.permanenciaTotal || 0} min`,
+                `- Excecoes Registradas no Rodizio: ${dados?.rodizio?.excecoesGeradas || 0}`,
+              ]}
+            />
           </div>
 
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
@@ -246,6 +232,154 @@ export default function SupervisaoDashboard() {
 }
 
 // ================= COMPONENTES AUXILIARES =================
+
+// Lista expansível de produção por médico (dia completo, 24h)
+function MedicosProducao({ lista }: { lista: any[] }) {
+  const [expandido, setExpandido] = useState<string | null>(null);
+  const medicos = lista || [];
+
+  if (medicos.length === 0) {
+    return <div className="py-10 text-center text-slate-400 text-sm font-bold">Nenhum atendimento médico registrado na data.</div>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {medicos.map(m => {
+        const aberto = expandido === m.medico;
+        return (
+          <div key={m.medico} className={`border rounded-xl transition-all ${aberto ? 'border-slate-300 shadow-sm' : 'border-slate-200'}`}>
+            <button
+              onClick={() => setExpandido(aberto ? null : m.medico)}
+              className="w-full flex items-center justify-between p-4 text-left hover:bg-slate-50 rounded-xl transition-colors"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <Stethoscope className="w-4 h-4 text-slate-400 shrink-0" />
+                <span className="font-bold text-sm text-slate-800 truncate">{m.medico}</span>
+              </div>
+              <div className="flex items-center gap-3 shrink-0 ml-4">
+                <span className="text-sm font-black text-slate-800">
+                  {m.total} <span className="text-xs font-medium text-slate-400">atend.</span>
+                </span>
+                {aberto ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+              </div>
+            </button>
+
+            {aberto && (
+              <div className="px-4 pb-4">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">Convênios Atendidos</p>
+                <div className="flex flex-wrap gap-2">
+                  {(m.convenios || []).map((c: any) => (
+                    <span key={c.nome} className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium px-2.5 py-1 rounded-md">
+                      {c.nome}
+                      <span className="font-black text-slate-900">{c.quantidade}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Gráfico de barras (CSS puro) com as chegadas de pacientes por hora do dia
+function FluxoHorarioChart({ dados }: { dados: any[] }) {
+  const porHora = Array.from({ length: 24 }, (_, h) => {
+    const item = dados.find((d: any) => Number(d.HORA ?? d.hora) === h);
+    return {
+      hora: h,
+      qtd: Number(item?.QUANTIDADE ?? item?.quantidade ?? 0),
+      mediana: Number(item?.MEDIANA_PERMANENCIA ?? item?.mediana_permanencia ?? 0)
+    };
+  });
+  const max = Math.max(...porHora.map(p => p.qtd), 1);
+  const total = porHora.reduce((acc, p) => acc + p.qtd, 0);
+  const pico = porHora.reduce((a, b) => (b.qtd > a.qtd ? b : a), porHora[0]);
+
+  if (total === 0) {
+    return <div className="h-56 flex items-center justify-center text-slate-400 text-sm font-bold">Sem chegadas registradas na data.</div>;
+  }
+
+  return (
+    <div>
+      <div className="flex items-end gap-1 h-48">
+        {porHora.map(p => (
+          <div
+            key={p.hora}
+            className="flex-1 flex flex-col items-center justify-end gap-1 group h-full"
+            title={`${String(p.hora).padStart(2, '0')}h — ${p.qtd} chegada(s)${p.mediana ? ` | permanência mediana: ${p.mediana} min` : ''}`}
+          >
+            <span className="text-[9px] font-black text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity">
+              {p.qtd || ''}
+            </span>
+            <div
+              className={`w-full rounded-t transition-colors ${p.qtd ? 'bg-purple-500 group-hover:bg-purple-700' : 'bg-slate-100'}`}
+              style={{ height: `${Math.max((p.qtd / max) * 100, p.qtd ? 4 : 2)}%` }}
+            />
+            <span className={`text-[9px] font-bold ${p.hora === pico.hora ? 'text-purple-600' : 'text-slate-400'}`}>{p.hora}</span>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-slate-500 font-medium mt-4 text-center">
+        Pico às <span className="font-black text-purple-600">{String(pico.hora).padStart(2, '0')}h</span> com {pico.qtd} chegada(s) · passe o mouse para detalhes
+      </p>
+    </div>
+  );
+}
+
+// Detalhe da permanência total: mediana, P90, máxima e distribuição por faixas
+function PermanenciaDetalhe({ detalhe, mediana }: any) {
+  const faixas = [
+    { label: '≤ 30 min', valor: detalhe?.faixas?.ate30 || 0, cor: 'bg-emerald-500' },
+    { label: '31–60 min', valor: detalhe?.faixas?.de31a60 || 0, cor: 'bg-blue-500' },
+    { label: '1–2 h', valor: detalhe?.faixas?.de61a120 || 0, cor: 'bg-amber-500' },
+    { label: '> 2 h', valor: detalhe?.faixas?.acima120 || 0, cor: 'bg-red-500' },
+  ];
+  const total = faixas.reduce((acc, f) => acc + f.valor, 0);
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-3 gap-3 text-center">
+        <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Mediana</p>
+          <p className="text-2xl font-black text-slate-800">{mediana || 0}<span className="text-xs font-normal text-slate-400 ml-0.5">m</span></p>
+        </div>
+        <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">P90</p>
+          <p className="text-2xl font-black text-slate-800">{detalhe?.p90 || 0}<span className="text-xs font-normal text-slate-400 ml-0.5">m</span></p>
+        </div>
+        <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Máxima</p>
+          <p className="text-2xl font-black text-red-600">{detalhe?.maxima || 0}<span className="text-xs font-normal text-slate-400 ml-0.5">m</span></p>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Distribuição dos Pacientes</p>
+        {total === 0 ? (
+          <p className="text-sm text-slate-400 font-bold text-center py-4">Sem dados na data.</p>
+        ) : (
+          faixas.map(f => {
+            const pct = Math.round((f.valor / total) * 100);
+            return (
+              <div key={f.label}>
+                <div className="flex justify-between text-xs font-bold text-slate-600 mb-1">
+                  <span>{f.label}</span>
+                  <span>{f.valor} ({pct}%)</span>
+                </div>
+                <div className="w-full bg-slate-100 rounded-full h-2.5">
+                  <div className={`${f.cor} h-2.5 rounded-full transition-all`} style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
 
 // Novo Componente para exibir o Ranking (Top 10)
 function RankingCard({ titulo, icone, dataDia, dataMes, corBase }: any) {
@@ -305,7 +439,8 @@ function RankingCard({ titulo, icone, dataDia, dataMes, corBase }: any) {
 function StatCard({ title, value, subtitle, color }: any) {
   const colors: any = {
     blue: 'border-l-blue-500 text-blue-600', emerald: 'border-l-emerald-500 text-emerald-600',
-    purple: 'border-l-purple-500 text-purple-600', red: 'border-l-red-500 text-red-600'
+    purple: 'border-l-purple-500 text-purple-600', red: 'border-l-red-500 text-red-600',
+    amber: 'border-l-amber-500 text-amber-600'
   };
   return (
     <div className={`bg-white p-6 rounded-2xl shadow-sm border border-slate-200 border-l-8 ${colors[color]}`}>

@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './app/store/authStore';
+import ModalGlobal from './components/ModalGlobal';
 
 // Importação das Páginas
 import LoginPage from './features/auth/pages/LoginPage';
@@ -21,7 +22,7 @@ const RotaProtegida = ({ children, rolesPermitidas }: { children: React.ReactNod
   // 2. BLINDAGEM DE PRIMEIRO ACESSO: Se o usuário ainda não trocou a senha provisória, 
   // ele não pode acessar NENHUM dashboard. É forçado para a tela de redefinição.
   if (user.trocar_senha) {
-    return <Navigate to="/redefinir-senha" state={{ usuarioId: user.id }} replace />;
+    return <Navigate to="/redefinir-senha" replace />;
   }
 
   // 3. Se estiver logado e com a senha em dia, mas não tiver a permissão correta (e não for admin), bloqueia
@@ -69,6 +70,9 @@ function App() {
         {/* Fallback: Se tentar acessar a raiz (/) ou rota inexistente, manda pro login */}
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
+
+      {/* Modal global de feedback (substitui os alert()) */}
+      <ModalGlobal />
     </BrowserRouter>
   );
 }
