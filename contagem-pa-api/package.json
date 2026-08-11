@@ -3,9 +3,15 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "bin": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "build:exe": "pkg ."
+  },
+  "pkg": {
+    "targets": ["node18-win-x64"],
+    "outputPath": "build"
   },
   "keywords": [],
   "author": "",

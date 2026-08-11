@@ -3,7 +3,12 @@ import { api } from '../../../lib/axios';
 import { useAuthStore } from '../../../app/store/authStore';
 import { useModalStore } from '../../../app/store/modalStore';
 import PassagemPlantao from '../../../components/PassagemPlantao';
-import { LogOut, Users, ArrowRightCircle, AlertTriangle, Stethoscope, Search, ChevronDown, ChevronUp, ClipboardCheck } from 'lucide-react';
+import { obterDadosRelatorio } from '../../../lib/relatorioPlantao';
+import {
+  LogOut, Users, ArrowRightCircle, AlertTriangle, Stethoscope, Search,
+  ChevronDown, ChevronUp, ClipboardCheck, UserPlus, Trash2,
+  Activity, Hourglass, UserCheck, Timer
+} from 'lucide-react';
 
 // ==========================================
 // 1. MOTOR DE CLASSIFICAÇÃO OTORRINO (TAXONOMIA)
@@ -38,34 +43,34 @@ function categorizarQueixas(queixas: string[]) {
 // ==========================================
 const QueixasViewer = ({ queixas }: { queixas: string[] }) => {
   const [categoriaAtiva, setCategoriaAtiva] = useState<string | null>(null);
-  
+
   if (!queixas || queixas.length === 0) return null;
-  
+
   const categorias = categorizarQueixas(queixas);
 
   return (
-    <div className="mt-3 w-full">
+    <div className="mt-2.5 w-full">
       {/* Botões Agrupadores */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-1.5">
         {Object.entries(categorias).map(([nome, itens]) => {
           if (itens.length === 0) return null;
           const isAtiva = categoriaAtiva === nome;
-          
+
           return (
             <button
               key={nome}
               onClick={() => setCategoriaAtiva(isAtiva ? null : nome)}
-              className={`text-[10px] px-3 py-1.5 rounded-lg font-black uppercase flex items-center gap-1.5 transition-all duration-200 ${
-                isAtiva 
-                  ? 'bg-slate-800 text-white shadow-md' 
+              className={`text-[11px] px-2.5 py-1 rounded-md font-semibold flex items-center gap-1.5 transition-all ${
+                isAtiva
+                  ? 'bg-slate-800 text-white'
                   : 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
               }`}
             >
               {nome}
-              <span className={`px-1.5 py-0.5 rounded-full text-[9px] ${isAtiva ? 'bg-slate-600' : 'bg-slate-200'}`}>
+              <span className={`px-1.5 rounded-full text-[10px] font-bold ${isAtiva ? 'bg-white/20' : 'bg-white text-slate-500'}`}>
                 {itens.length}
               </span>
-              {isAtiva ? <ChevronUp className="w-3 h-3 ml-1" /> : <ChevronDown className="w-3 h-3 ml-1" />}
+              {isAtiva ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
           );
         })}
@@ -73,11 +78,11 @@ const QueixasViewer = ({ queixas }: { queixas: string[] }) => {
 
       {/* Painel de Expansão (Detalhes) */}
       {categoriaAtiva && categorias[categoriaAtiva].length > 0 && (
-        <div className="mt-2 p-3 bg-slate-50 border border-slate-200 rounded-lg flex flex-wrap gap-2 animate-in fade-in slide-in-from-top-2">
+        <div className="mt-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg flex flex-wrap gap-1.5">
           {categorias[categoriaAtiva].map((q, idx) => (
-            <span 
-              key={idx} 
-              className="bg-white text-slate-700 border border-slate-300 shadow-sm text-[10px] px-2 py-1 rounded font-bold uppercase tracking-wider"
+            <span
+              key={idx}
+              className="bg-white text-slate-600 border border-slate-200 text-[11px] px-2 py-0.5 rounded font-medium"
             >
               {q}
             </span>
@@ -94,14 +99,20 @@ const QueixasViewer = ({ queixas }: { queixas: string[] }) => {
 export default function PADashboard() {
   const { user, logout } = useAuthStore();
   const mostrarModal = useModalStore((state) => state.mostrarModal);
+  const mostrarConfirmacao = useModalStore((state) => state.mostrarConfirmacao);
 
   const [fila, setFila] = useState<any[]>([]);
   const [medicosCatalogo, setMedicosCatalogo] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Indicadores do dia (medianas) e navegação Despacho / Plantão
+  // Indicadores do dia (medianas) e navegação Despacho / Fila / Plantão
   const [indicadores, setIndicadores] = useState<any>(null);
-  const [visao, setVisao] = useState<'despacho' | 'plantao'>('despacho');
+  const [visao, setVisao] = useState<'despacho' | 'fila' | 'plantao'>('despacho');
+
+  // Fila da Recepção (sem cotas, montada manualmente)
+  const [filaRecepcao, setFilaRecepcao] = useState<any[]>([]);
+  const [buscaFilaRecep, setBuscaFilaRecep] = useState('');
+  const [mostrarDropdownRecep, setMostrarDropdownRecep] = useState(false);
 
   // Estados dos formulários
   const [identificadorPaciente, setIdentificadorPaciente] = useState('');
@@ -117,9 +128,32 @@ export default function PADashboard() {
     carregarMedicosCatalogo();
     carregarFila();
     carregarIndicadores();
-    const intervalo = setInterval(carregarFila, 5000);
-    const intervaloInd = setInterval(carregarIndicadores, 60000);
-    return () => { clearInterval(intervalo); clearInterval(intervaloInd); };
+    carregarFilaRecepcao();
+
+    // Polling só com a aba VISÍVEL: aba esquecida em segundo plano não gera requests
+    const soVisivel = (fn: () => void) => () => {
+      if (document.visibilityState === 'visible') fn();
+    };
+    const intervalo = setInterval(soVisivel(carregarFila), 5000);
+    const intervaloInd = setInterval(soVisivel(carregarIndicadores), 60000);
+    const intervaloRecep = setInterval(soVisivel(carregarFilaRecepcao), 15000);
+
+    // Ao voltar para a aba, atualiza tudo imediatamente
+    const aoVoltar = () => {
+      if (document.visibilityState === 'visible') {
+        carregarFila();
+        carregarIndicadores();
+        carregarFilaRecepcao();
+      }
+    };
+    document.addEventListener('visibilitychange', aoVoltar);
+
+    return () => {
+      clearInterval(intervalo);
+      clearInterval(intervaloInd);
+      clearInterval(intervaloRecep);
+      document.removeEventListener('visibilitychange', aoVoltar);
+    };
   }, []);
 
   const carregarIndicadores = async () => {
@@ -129,6 +163,54 @@ export default function PADashboard() {
     } catch (error) {
       console.error("Erro ao carregar indicadores do PA:", error);
     }
+  };
+
+  const carregarFilaRecepcao = async () => {
+    try {
+      const response = await api.get('/pa/fila-recepcao');
+      setFilaRecepcao(response.data);
+    } catch (error) {
+      console.error("Erro ao carregar a fila da recepção:", error);
+    }
+  };
+
+  const handleAdicionarFilaRecep = async (medico: any) => {
+    try {
+      await api.post('/pa/fila-recepcao', {
+        medico_id: medico.id,
+        medico_nome: medico.nome,
+        medico_crm: medico.crm
+      });
+      setBuscaFilaRecep('');
+      setMostrarDropdownRecep(false);
+      carregarFilaRecepcao();
+    } catch (error: any) {
+      mostrarModal('erro', 'Falha ao Adicionar', error.response?.data?.erro || 'Não foi possível adicionar o médico à fila.');
+    }
+  };
+
+  const handleEncaminharRecep = async (id: number, desfazer = false) => {
+    try {
+      await api.put(`/pa/fila-recepcao/${id}/encaminhar`, { desfazer });
+      carregarFilaRecepcao();
+    } catch (error: any) {
+      mostrarModal('erro', 'Falha ao Atualizar', error.response?.data?.erro || 'Não foi possível atualizar o contador.');
+    }
+  };
+
+  const handleRemoverFilaRecep = (id: number, nome: string) => {
+    mostrarConfirmacao(
+      'Remover da Fila',
+      `Remover ${nome} da fila da recepção?`,
+      async () => {
+        try {
+          await api.delete(`/pa/fila-recepcao/${id}`);
+          carregarFilaRecepcao();
+        } catch (error: any) {
+          mostrarModal('erro', 'Falha ao Remover', error.response?.data?.erro || 'Não foi possível remover o médico da fila.');
+        }
+      }
+    );
   };
 
   const carregarMedicosCatalogo = async () => {
@@ -159,7 +241,7 @@ export default function PADashboard() {
       const response = await api.post('/pa/encaminhar', {
         paciente_identificador: identificadorPaciente
       });
-      
+
       mostrarModal('sucesso', 'Paciente Encaminhado', `Dr(a). ${response.data.medico_nome || 'Médico do Rodízio'}`);
       setIdentificadorPaciente('');
       carregarFila();
@@ -183,7 +265,7 @@ export default function PADashboard() {
         paciente_identificador: identificadorPaciente,
         justificativa: justificativa
       });
-      
+
       mostrarModal('sucesso', 'Exceção Registrada', 'Paciente encaminhado. O médico foi movido para o final do rodízio.');
       setIdentificadorPaciente('');
       setCotaExcecaoId('');
@@ -207,6 +289,12 @@ export default function PADashboard() {
     };
   });
 
+  // Fila da Recepção: médicos do catálogo que casam com a busca e ainda não estão na fila
+  const medicosDisponiveisRecep = medicosCatalogo.filter(m =>
+    m.nome.toLowerCase().includes(buscaFilaRecep.toLowerCase()) &&
+    !filaRecepcao.some(f => String(f.medico_id) === String(m.id))
+  );
+
   // Com um médico já selecionado, o campo contém "Dr(a). NOME" — texto que não casaria
   // com o filtro. Nesse caso mostramos a fila completa (com o selecionado em destaque).
   const filaFiltradaExcecao = cotaExcecaoId
@@ -217,26 +305,31 @@ export default function PADashboard() {
       );
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
-      <header className="bg-white shadow-sm px-8 py-4 flex justify-between items-center border-b-4 border-slate-800">
+    <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900">
+
+      {/* ===== HEADER ===== */}
+      <header className="bg-white border-b border-slate-200 px-6 py-3.5 flex justify-between items-center sticky top-0 z-20">
         <div className="flex items-center gap-3">
           <div className="bg-slate-800 p-2 rounded-lg">
-            <Users className="text-white w-6 h-6" />
+            <Users className="text-white w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-slate-800">Pronto Atendimento (PA)</h1>
-            <p className="text-sm text-slate-500">Distribuição de Senhas</p>
+            <h1 className="text-base font-bold text-slate-800 leading-tight">Pronto Atendimento</h1>
+            <p className="text-xs text-slate-500">Distribuição de senhas e rodízio médico</p>
           </div>
         </div>
-        
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <p className="text-sm font-semibold text-slate-800">{user?.nome}</p>
-            <p className="text-xs text-slate-500 uppercase font-bold">{user?.role}</p>
+
+        <div className="flex items-center gap-3">
+          <div className="hidden sm:flex items-center gap-2.5 pr-3 border-r border-slate-200">
+            <Avatar nome={user?.nome || 'PA'} />
+            <div className="leading-tight">
+              <p className="text-sm font-semibold text-slate-700">{user?.nome}</p>
+              <p className="text-xs text-slate-400">{user?.usuario}</p>
+            </div>
           </div>
-          <button 
+          <button
             onClick={logout}
-            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
             title="Encerrar Sessão"
           >
             <LogOut className="w-5 h-5" />
@@ -244,278 +337,400 @@ export default function PADashboard() {
         </div>
       </header>
 
-      <main className="flex-1 p-8 max-w-[1600px] mx-auto w-full space-y-6">
+      <main className="flex-1 p-4 md:p-6 max-w-[1500px] mx-auto w-full space-y-6">
 
-        {/* Indicadores do dia (medianas do MV) */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <MiniIndicador titulo="Atendimentos Hoje" valor={indicadores?.totalAtendimentos} unidade="" />
-          <MiniIndicador titulo="Espera Recepção" valor={indicadores?.tempos?.esperaRecepcao} unidade="min" />
-          <MiniIndicador titulo="Tempo Cadastro" valor={indicadores?.tempos?.cadastro} unidade="min" />
-          <MiniIndicador titulo="Espera Médica" valor={indicadores?.tempos?.esperaMedica} unidade="min" />
-          <MiniIndicador titulo="Permanência Total" valor={indicadores?.tempos?.permanenciaTotal} unidade="min" />
+        {/* ===== INDICADORES DO DIA ===== */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 md:gap-4">
+          <MiniIndicador titulo="Atendimentos Hoje" valor={indicadores?.totalAtendimentos} unidade="" icone={<Activity className="w-4 h-4" />} />
+          <MiniIndicador titulo="Espera Recepção" valor={indicadores?.tempos?.esperaRecepcao} unidade="min" icone={<Hourglass className="w-4 h-4" />} />
+          <MiniIndicador titulo="Tempo Cadastro" valor={indicadores?.tempos?.cadastro} unidade="min" icone={<UserCheck className="w-4 h-4" />} />
+          <MiniIndicador titulo="Espera Médica" valor={indicadores?.tempos?.esperaMedica} unidade="min" icone={<Timer className="w-4 h-4" />} />
+          <MiniIndicador titulo="Permanência Total" valor={indicadores?.tempos?.permanenciaTotal} unidade="min" icone={<Timer className="w-4 h-4" />} />
         </div>
 
-        {/* Mini navbar: Despacho / Passagem de Plantão */}
-        <div className="inline-flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-          <button
+        {/* ===== NAVEGAÇÃO ===== */}
+        <div className="inline-flex flex-wrap bg-slate-200/70 p-1 rounded-xl gap-1">
+          <TabButton
+            ativa={visao === 'despacho'}
             onClick={() => setVisao('despacho')}
-            className={`px-5 py-2 text-sm font-bold rounded-lg flex items-center gap-2 transition-all ${
-              visao === 'despacho' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <ArrowRightCircle className="w-4 h-4" /> Fila de Rodízio
-          </button>
-          <button
+            icone={<ArrowRightCircle className="w-4 h-4" />}
+            label="Despacho"
+          />
+          <TabButton
+            ativa={visao === 'fila'}
+            onClick={() => setVisao('fila')}
+            icone={<Users className="w-4 h-4" />}
+            label="Fila da Recepção"
+            badge={filaRecepcao.length || undefined}
+          />
+          <TabButton
+            ativa={visao === 'plantao'}
             onClick={() => setVisao('plantao')}
-            className={`px-5 py-2 text-sm font-bold rounded-lg flex items-center gap-2 transition-all ${
-              visao === 'plantao' ? 'bg-slate-800 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <ClipboardCheck className="w-4 h-4" /> Passagem de Plantão
-          </button>
+            icone={<ClipboardCheck className="w-4 h-4" />}
+            label="Passagem de Plantão"
+          />
         </div>
 
+        {/* ===== VISÃO: DESPACHO ===== */}
         {visao === 'despacho' ? (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
-        {/* Painel de Despacho */}
-        <div className="lg:col-span-4 space-y-6">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h2 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
-              <ArrowRightCircle className="text-slate-800 w-5 h-5" />
-              Painel 
-            </h2>
+            {/* Painel de Despacho */}
+            {/* sem overflow-hidden: os dropdowns de busca precisam flutuar sobre o card */}
+            <section className="lg:col-span-4 bg-white rounded-xl border border-slate-200 shadow-sm">
+              <CardHeader icone={<ArrowRightCircle className="w-4 h-4" />} titulo="Painel de Despacho" />
+              <div className="p-5">
 
-            <div className="flex p-1 bg-slate-100 rounded-lg mb-6 border border-slate-200">
-              <button
-                type="button"
-                onClick={() => setModoExcecao(false)}
-                className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${!modoExcecao ? 'bg-white shadow-sm text-slate-800 border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                Rodízio Padrão
-              </button>
-              <button
-                type="button"
-                onClick={() => setModoExcecao(true)}
-                className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${modoExcecao ? 'bg-white shadow-sm text-amber-600 border border-slate-200' : 'text-slate-500 hover:text-slate-700'}`}
-              >
-                Exceção (Furar Fila)
-              </button>
-            </div>
-
-            {!modoExcecao ? (
-              <form onSubmit={handleEncaminharNormal} className="space-y-5">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Identificação do Paciente</label>
-                  <input 
-                    type="text" 
-                    value={identificadorPaciente}
-                    onChange={(e) => setIdentificadorPaciente(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-800 outline-none text-base font-medium"
-                    placeholder="Nome, Código MV ou Senha..."
-                    required
-                    autoFocus
-                  />
-                  <p className="text-xs text-slate-500 mt-2 font-medium">
-                    Alocação automática ao médico que aguarda há mais tempo.
-                  </p>
+                <div className="flex p-1 bg-slate-100 rounded-lg mb-5 border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setModoExcecao(false)}
+                    className={`flex-1 py-2 text-sm font-semibold rounded-md transition-all ${!modoExcecao ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    Rodízio Padrão
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModoExcecao(true)}
+                    className={`flex-1 py-2 text-sm font-semibold rounded-md transition-all ${modoExcecao ? 'bg-white shadow-sm text-amber-600' : 'text-slate-500 hover:text-slate-700'}`}
+                  >
+                    Exceção
+                  </button>
                 </div>
 
-                <button 
-                  type="submit"
-                  disabled={loading || filaEnriquecida.length === 0}
-                  className="w-full bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold py-4 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 text-base shadow-sm"
-                >
-                  {loading ? 'Processando...' : 'Encaminhar Próximo Paciente'}
-                  <ArrowRightCircle className="w-5 h-5" />
-                </button>
-                {filaEnriquecida.length === 0 && (
-                  <p className="text-red-500 text-xs text-center font-bold mt-3">Fila operacional vazia. Aguarde a inserção de cotas.</p>
+                {!modoExcecao ? (
+                  <form onSubmit={handleEncaminharNormal} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">Identificação do Paciente</label>
+                      <input
+                        type="text"
+                        value={identificadorPaciente}
+                        onChange={(e) => setIdentificadorPaciente(e.target.value)}
+                        className="w-full px-4 py-3 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-800 focus:border-transparent outline-none font-medium transition-all"
+                        placeholder="Nome, Código MV ou Senha..."
+                        required
+                        autoFocus
+                      />
+                      <p className="text-xs text-slate-400 mt-2">
+                        Alocação automática ao médico que aguarda há mais tempo.
+                      </p>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading || filaEnriquecida.length === 0}
+                      className="w-full bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-semibold py-3.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+                    >
+                      {loading ? 'Processando...' : 'Encaminhar Próximo Paciente'}
+                      <ArrowRightCircle className="w-4 h-4" />
+                    </button>
+                    {filaEnriquecida.length === 0 && (
+                      <p className="text-red-500 text-xs text-center font-semibold">Fila operacional vazia.</p>
+                    )}
+                  </form>
+                ) : (
+                  <form onSubmit={handleEncaminharExcecao} className="space-y-4">
+                    <div className="bg-amber-50 text-amber-800 p-3 rounded-lg border border-amber-200 text-xs flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <p><strong>Auditoria:</strong> envios por exceção movem o médico selecionado para o final do rodízio.</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">Identificação do Paciente</label>
+                      <input
+                        type="text"
+                        value={identificadorPaciente}
+                        onChange={(e) => setIdentificadorPaciente(e.target.value)}
+                        className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none font-medium transition-all"
+                        placeholder="Nome, Código MV ou Senha..."
+                        required
+                      />
+                    </div>
+
+                    <div className="relative">
+                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">Médico Destino (Ativo)</label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={buscaMedico}
+                          onChange={(e) => {
+                            setBuscaMedico(e.target.value);
+                            setMostrarDropdown(true);
+                            setCotaExcecaoId('');
+                          }}
+                          onFocus={() => setMostrarDropdown(true)}
+                          onBlur={() => setTimeout(() => setMostrarDropdown(false), 200)}
+                          className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none bg-white pr-10 text-sm font-medium transition-all"
+                          placeholder="Pesquise por nome ou queixa..."
+                          required={!cotaExcecaoId}
+                        />
+                        <Search className="w-4 h-4 text-slate-400 absolute right-3 top-3" />
+                      </div>
+
+                      {mostrarDropdown && (
+                        <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                          {filaFiltradaExcecao.length === 0 ? (
+                            <div className="p-4 text-sm text-center text-slate-500">Nenhuma correlação encontrada.</div>
+                          ) : (
+                            filaFiltradaExcecao.map(cota => (
+                              <div
+                                key={cota.id}
+                                onMouseDown={() => {
+                                  setCotaExcecaoId(cota.id);
+                                  setBuscaMedico(`Dr(a). ${cota.medico_nome}`);
+                                  setMostrarDropdown(false);
+                                }}
+                                className={`p-3 cursor-pointer border-b border-slate-100 last:border-0 hover:bg-amber-50 transition-colors ${
+                                  cotaExcecaoId === cota.id ? 'bg-amber-100 font-semibold text-amber-800' : 'text-slate-700'
+                                }`}
+                              >
+                                <p className="font-semibold text-sm">Dr(a). {cota.medico_nome}</p>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 mb-1.5">Justificativa Operacional</label>
+                      <textarea
+                        value={justificativa}
+                        onChange={(e) => setJustificativa(e.target.value)}
+                        className="w-full px-4 py-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent outline-none resize-none h-20 text-sm transition-all"
+                        placeholder="Motivo clínico ou estrutural..."
+                        required
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full bg-amber-500 hover:bg-amber-600 disabled:bg-slate-300 text-white font-semibold py-3 px-4 rounded-lg transition-colors text-sm"
+                    >
+                      {loading ? 'Processando...' : 'Confirmar Exceção'}
+                    </button>
+                  </form>
                 )}
-              </form>
-            ) : (
-              <form onSubmit={handleEncaminharExcecao} className="space-y-4">
-                <div className="bg-amber-50 text-amber-800 p-3 rounded-lg border border-amber-200 text-xs flex items-start gap-2 mb-4">
-                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <p><strong>Auditoria:</strong> Envios por exceção remetem o profissional médico selecionado para o final do ciclo de rodízio.</p>
-                </div>
+              </div>
+            </section>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Identificação do Paciente</label>
-                  <input 
-                    type="text" 
-                    value={identificadorPaciente}
-                    onChange={(e) => setIdentificadorPaciente(e.target.value)}
-                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none font-medium"
-                    placeholder="Nome, Código MV ou Senha..."
-                    required
-                  />
-                </div>
-
-                <div className="relative">
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Médico Destino (Ativo)</label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={buscaMedico}
-                      onChange={(e) => {
-                        setBuscaMedico(e.target.value);
-                        setMostrarDropdown(true);
-                        setCotaExcecaoId('');
-                      }}
-                      onFocus={() => setMostrarDropdown(true)}
-                      onBlur={() => setTimeout(() => setMostrarDropdown(false), 200)}
-                      className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none bg-white pr-10 font-medium text-sm"
-                      placeholder="Pesquise por nome ou queixa..."
-                      required={!cotaExcecaoId}
-                    />
-                    <Search className="w-4 h-4 text-slate-400 absolute right-3 top-3" />
+            {/* Fila de Rodízio */}
+            <section className="lg:col-span-8 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+                    <Stethoscope className="w-4 h-4" />
                   </div>
+                  <h2 className="text-sm font-semibold text-slate-800">Cadeia de Alocação</h2>
+                </div>
+                <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
+                  {filaEnriquecida.length} médico(s) na fila
+                </span>
+              </div>
 
-                  {mostrarDropdown && (
+              <div className="p-5">
+                {filaEnriquecida.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+                    <Users className="w-12 h-12 mb-3 opacity-20" />
+                    <p className="text-sm font-semibold text-slate-500">Sem médicos ativos na fila</p>
+                    <p className="text-xs">Aguardando a inserção pela secretaria.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filaEnriquecida.map((cota, index) => (
+                      <div
+                        key={cota.id}
+                        className={`p-4 rounded-xl border transition-all ${
+                          index === 0
+                            ? 'border-slate-800 bg-slate-50/80 shadow-sm'
+                            : 'border-slate-200 bg-white'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start gap-3 min-w-0 flex-1">
+                            <div className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold text-sm shrink-0 mt-0.5 ${
+                              index === 0 ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-400'
+                            }`}>
+                              {index + 1}º
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className={`font-semibold truncate ${index === 0 ? 'text-slate-900' : 'text-slate-700'}`}>
+                                  {cota.medico_nome}
+                                </h3>
+                                {index === 0 && (
+                                  <span className="bg-slate-800 text-white text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0">
+                                    Próximo
+                                  </span>
+                                )}
+                                {cota.fila_continua && (
+                                  <span className="bg-purple-50 text-purple-700 border border-purple-200 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0">
+                                    Contínua
+                                  </span>
+                                )}
+                              </div>
+
+                              <QueixasViewer queixas={cota.queixas} />
+
+                              {cota.observacao && (
+                                <p className="text-xs text-slate-500 mt-2.5 flex items-center gap-1.5 bg-slate-100 px-2.5 py-1.5 rounded-md w-fit border border-slate-200">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                  {cota.observacao}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="text-center shrink-0">
+                            <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wide mb-1">Vagas</p>
+                            <div className={`w-11 h-11 rounded-full flex items-center justify-center font-bold text-lg border-[3px] ${
+                              index === 0 ? 'border-slate-800 text-slate-800' : 'border-slate-200 text-slate-500'
+                            }`}>
+                              {cota.fila_continua ? '∞' : cota.quantidade_restante}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+
+        ) : visao === 'fila' ? (
+
+          /* ===== VISÃO: FILA DA RECEPÇÃO ===== */
+          <div className="max-w-3xl space-y-6">
+            {/* sem overflow-hidden: o dropdown de busca precisa flutuar sobre o card */}
+            <section className="bg-white rounded-xl border border-slate-200 shadow-sm">
+              <CardHeader icone={<UserPlus className="w-4 h-4" />} titulo="Adicionar Médico à Fila da Recepção" />
+              <div className="p-5">
+                <p className="text-xs text-slate-500 mb-3">
+                  Fila montada pela recepção. Pesquise pelo nome e clique no médico para adicioná-lo.
+                </p>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={buscaFilaRecep}
+                    onChange={(e) => { setBuscaFilaRecep(e.target.value); setMostrarDropdownRecep(true); }}
+                    onFocus={() => setMostrarDropdownRecep(true)}
+                    onBlur={() => setTimeout(() => setMostrarDropdownRecep(false), 200)}
+                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-800 focus:border-transparent outline-none bg-white pr-10 font-medium transition-all"
+                    placeholder="Digite o nome do médico..."
+                  />
+                  <Search className="w-5 h-5 text-slate-400 absolute right-3 top-3.5" />
+
+                  {mostrarDropdownRecep && buscaFilaRecep.trim() !== '' && (
                     <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
-                      {filaFiltradaExcecao.length === 0 ? (
-                        <div className="p-4 text-sm text-center text-slate-500">Nenhuma correlação encontrada.</div>
+                      {medicosDisponiveisRecep.length === 0 ? (
+                        <div className="p-4 text-sm text-center text-slate-500">Nenhum médico disponível com esse nome.</div>
                       ) : (
-                        filaFiltradaExcecao.map(cota => (
+                        medicosDisponiveisRecep.slice(0, 30).map(medico => (
                           <div
-                            key={cota.id}
-                            onMouseDown={() => {
-                              setCotaExcecaoId(cota.id);
-                              setBuscaMedico(`Dr(a). ${cota.medico_nome}`);
-                              setMostrarDropdown(false);
-                            }}
-                            className={`p-3 cursor-pointer border-b border-slate-100 last:border-0 hover:bg-amber-50 transition-colors ${
-                              cotaExcecaoId === cota.id ? 'bg-amber-100 font-semibold text-amber-800' : 'text-slate-700'
-                            }`}
+                            key={medico.id}
+                            onMouseDown={() => handleAdicionarFilaRecep(medico)}
+                            className="p-3 cursor-pointer border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors"
                           >
-                            <p className="font-bold text-sm">Dr(a). {cota.medico_nome}</p>
+                            <p className="font-medium text-sm text-slate-800">{medico.nome}</p>
+                            {medico.crm && <p className="text-xs text-slate-500 mt-0.5">CRM: {medico.crm}</p>}
                           </div>
                         ))
                       )}
                     </div>
                   )}
                 </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">Justificativa </label>
-                  <textarea 
-                    value={justificativa}
-                    onChange={(e) => setJustificativa(e.target.value)}
-                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-amber-500 outline-none resize-none h-20 text-sm font-medium"
-                    placeholder="Motivo clínico ou estrutural..."
-                    required
-                  />
-                </div>
-
-                <button 
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 px-4 rounded-lg transition-colors mt-2 text-sm shadow-sm"
-                >
-                  {loading ? 'Processando...' : 'Confirmar Exceção'}
-                </button>
-              </form>
-            )}
-          </div>
-        </div>
-
-        {/* Fila de Rodízio Visual com Componente Expansível */}
-        <div className="lg:col-span-8">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 min-h-full">
-            <div className="flex items-center justify-between mb-6 border-b pb-4">
-              <div className="flex items-center gap-2">
-                <Stethoscope className="text-slate-800 w-5 h-5" />
-                <h2 className="text-lg font-bold text-slate-800">Fila de Rodízio</h2>
               </div>
-              <span className="bg-slate-100 text-slate-600 text-xs font-bold px-3 py-1 rounded-full border border-slate-200">
-                {filaEnriquecida.length} Recursos Disponíveis
-              </span>
-            </div>
+            </section>
 
-            {filaEnriquecida.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-                <Users className="w-12 h-12 mb-4 opacity-20" />
-                <p className="text-base font-semibold text-slate-600">Sem recursos médicos ativos</p>
-                <p className="text-sm">O sistema encontra-se ocioso.</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {filaEnriquecida.map((cota, index) => (
-                  <div 
-                    key={cota.id} 
-                    className={`p-5 rounded-xl border-2 transition-all ${
-                      index === 0 
-                        ? 'border-slate-800 bg-slate-50 shadow-sm' 
-                        : 'border-slate-200 bg-white'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start gap-4 w-full">
-                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center font-black text-lg shrink-0 mt-1 ${
-                          index === 0 ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-400'
-                        }`}>
-                          {index + 1}º
-                        </div>
-                        
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <h3 className={`font-bold ${index === 0 ? 'text-slate-900 text-lg' : 'text-slate-700 text-base'}`}>
-                              {cota.medico_nome}
-                            </h3>
-                            {cota.fila_continua && (
-                              <span className="bg-purple-50 text-purple-700 border border-purple-200 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
-                                Contínua
-                              </span>
-                            )}
-                          </div>
-                          
-                          {/* Substituição pela Taxonomia Estruturada */}
-                          <QueixasViewer queixas={cota.queixas} />
-
-                          {cota.observacao && (
-                            <p className="text-xs text-slate-600 mt-3 flex items-center gap-1.5 font-medium bg-slate-100 p-2 rounded-md w-fit border border-slate-200">
-                              <AlertTriangle className="w-3.5 h-3.5 text-slate-500" />
-                              {cota.observacao}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="text-right shrink-0 ml-6 flex flex-col items-end">
-                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest mb-1">Vagas</p>
-                        <div className={`w-12 h-12 rounded-full flex items-center justify-center font-black text-xl border-4 ${
-                          index === 0 ? 'border-slate-800 text-slate-800' : 'border-slate-200 text-slate-500'
-                        }`}>
-                          {cota.fila_continua ? '∞' : cota.quantidade_restante}
-                        </div>
-                      </div>
-                    </div>
+            <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+                    <Users className="w-4 h-4" />
                   </div>
-                ))}
+                  <h2 className="text-sm font-semibold text-slate-800">Fila da Recepção</h2>
+                </div>
+                <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
+                  {filaRecepcao.length} médico(s)
+                </span>
               </div>
-            )}
-          </div>
-        </div>
 
-        </div>
+              <div className="p-5">
+                {filaRecepcao.length === 0 ? (
+                  <div className="py-10 text-center text-slate-400 text-sm font-semibold">Nenhum médico na fila da recepção.</div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {filaRecepcao.map((item, index) => (
+                      <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-4 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="w-9 h-9 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center font-bold text-sm shrink-0">
+                            {index + 1}º
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-sm text-slate-800 truncate">{item.medico_nome}</p>
+                            <p className="text-xs text-slate-400">
+                              {item.medico_crm ? `CRM: ${item.medico_crm} · ` : ''}
+                              Adicionado por {item.adicionado_por_nome || 'N/A'} às {new Date(item.criado_em).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {item.ultimo_envio_em && ` · Último envio: ${new Date(item.ultimo_envio_em).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Contador de pacientes encaminhados */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => handleEncaminharRecep(item.id, true)}
+                            disabled={!item.total_encaminhados}
+                            className="w-8 h-8 rounded-lg border border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100 font-bold transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                            title="Desfazer último envio"
+                          >
+                            −
+                          </button>
+                          <div
+                            className="w-11 h-11 rounded-full border-[3px] border-slate-800 text-slate-800 flex items-center justify-center font-bold text-lg"
+                            title="Pacientes encaminhados"
+                          >
+                            {item.total_encaminhados ?? 0}
+                          </div>
+                          <button
+                            onClick={() => handleEncaminharRecep(item.id)}
+                            className="h-11 px-4 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-sm font-semibold flex items-center gap-1.5 transition-colors"
+                            title="Somar um paciente encaminhado"
+                          >
+                            <ArrowRightCircle className="w-4 h-4" /> +1
+                          </button>
+                          <button
+                            onClick={() => handleRemoverFilaRecep(item.id, item.medico_nome)}
+                            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Remover da fila"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+
         ) : (
+
+          /* ===== VISÃO: PASSAGEM DE PLANTÃO ===== */
           <div className="max-w-2xl">
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-              <h2 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2 border-b pb-4">
-                <ClipboardCheck className="text-slate-800 w-5 h-5" /> Fila de Rodízio
-              </h2>
-              <PassagemPlantao
-                cor="slate"
-                linhasIndicadores={[
-                  `- Atendimentos no dia: ${indicadores?.totalAtendimentos || 0}`,
-                  `- Espera Recepcao (mediana): ${indicadores?.tempos?.esperaRecepcao || 0} min`,
-                  `- Tempo de Cadastro (mediana): ${indicadores?.tempos?.cadastro || 0} min`,
-                  `- Espera Medica (mediana): ${indicadores?.tempos?.esperaMedica || 0} min`,
-                  `- Permanencia Total (mediana): ${indicadores?.tempos?.permanenciaTotal || 0} min`,
-                ]}
-              />
-            </div>
+            <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <CardHeader icone={<ClipboardCheck className="w-4 h-4" />} titulo="Passagem de Plantão da Recepção" />
+              <div className="p-5">
+                <PassagemPlantao
+                  cor="slate"
+                  obterDados={() => obterDadosRelatorio()}
+                />
+              </div>
+            </section>
           </div>
         )}
       </main>
@@ -523,14 +738,67 @@ export default function PADashboard() {
   );
 }
 
-// Card compacto de indicador (medianas do dia vindas do MV)
-function MiniIndicador({ titulo, valor, unidade }: any) {
+// ================= COMPONENTES AUXILIARES =================
+
+function TabButton({ ativa, onClick, icone, label, badge }: any) {
   return (
-    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-center">
-      <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-1">{titulo}</p>
-      <p className="text-2xl font-black text-slate-800">
-        {valor ?? '-'}
-        {unidade && <span className="text-xs font-medium text-slate-400 ml-1">{unidade}</span>}
+    <button
+      onClick={onClick}
+      className={`px-4 py-2 text-sm font-semibold rounded-lg flex items-center gap-2 transition-all ${
+        ativa ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+      }`}
+    >
+      {icone} {label}
+      {badge !== undefined && (
+        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${ativa ? 'bg-slate-800 text-white' : 'bg-slate-300/70 text-slate-600'}`}>
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function CardHeader({ icone, titulo }: any) {
+  return (
+    <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-2.5">
+      <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+        {icone}
+      </div>
+      <h2 className="text-sm font-semibold text-slate-800">{titulo}</h2>
+    </div>
+  );
+}
+
+function Avatar({ nome }: { nome: string }) {
+  const iniciais = nome
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(p => p[0])
+    .filter((_, i, arr) => i === 0 || i === arr.length - 1)
+    .join('')
+    .toUpperCase();
+
+  return (
+    <div className="w-9 h-9 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-xs font-bold text-slate-600 shrink-0">
+      {iniciais || '?'}
+    </div>
+  );
+}
+
+// Card compacto de indicador (medianas do dia vindas do MV)
+function MiniIndicador({ titulo, valor, unidade, icone }: any) {
+  return (
+    <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+      <div className="flex items-center gap-2 mb-2">
+        <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
+          {icone}
+        </div>
+        <p className="text-xs font-semibold text-slate-500 truncate">{titulo}</p>
+      </div>
+      <p className="text-2xl font-bold text-slate-800">
+        {valor ?? '—'}
+        {unidade && <span className="text-sm font-medium text-slate-400 ml-1">{unidade}</span>}
       </p>
     </div>
   );

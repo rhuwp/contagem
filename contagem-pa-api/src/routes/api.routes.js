@@ -7,12 +7,14 @@ const AuthController = require('../controllers/AuthController');
 const MedicoController = require('../controllers/MedicoController');
 const SupervisaoController = require('../controllers/SupervisaoController');
 const AdminController = require('../controllers/AdminController');
+const FilaRecepcaoController = require('../controllers/FilaRecepcaoController');
 
 // Importação unificada e correta dos middlewares de segurança
-const { verificarToken, verificarRole } = require('../middlewares/auth.middleware');
+const { verificarToken, verificarRole, limitarTentativasLogin } = require('../middlewares/auth.middleware');
 
 // --- ROTAS ABERTAS ---
-router.post('/auth/login', AuthController.login);
+// Rate-limit: máx. 10 tentativas de login por IP a cada 15 minutos
+router.post('/auth/login', limitarTentativasLogin, AuthController.login);
 
 // --- ROTAS PROTEGIDAS (Exige Token) ---
 router.use(verificarToken);
@@ -32,6 +34,13 @@ router.put('/secretaria/cota/:id/cancelar', verificarRole(['secretaria', 'admin'
 router.post('/pa/encaminhar', verificarRole(['pa', 'admin']), FilaController.encaminharPaciente);
 router.post('/pa/excecao', verificarRole(['pa', 'admin']), FilaController.enviarExcecao);
 router.get('/pa/indicadores', verificarRole(['pa', 'supervisao', 'admin']), SupervisaoController.obterIndicadoresPa);
+router.get('/pa/relatorio-plantao', verificarRole(['pa', 'supervisao', 'admin']), SupervisaoController.obterRelatorioPlantao);
+
+// Fila da Recepção do PA (sem cotas, montada manualmente pela recepção)
+router.get('/pa/fila-recepcao', verificarRole(['pa', 'supervisao', 'admin']), FilaRecepcaoController.listar);
+router.post('/pa/fila-recepcao', verificarRole(['pa', 'admin']), FilaRecepcaoController.adicionar);
+router.put('/pa/fila-recepcao/:id/encaminhar', verificarRole(['pa', 'admin']), FilaRecepcaoController.encaminhar);
+router.delete('/pa/fila-recepcao/:id', verificarRole(['pa', 'admin']), FilaRecepcaoController.remover);
 
 // --- ROTAS DA SUPERVISÃO ---
 router.get('/supervisao/dashboard', verificarRole(['supervisao', 'admin']), SupervisaoController.obterDashboard);

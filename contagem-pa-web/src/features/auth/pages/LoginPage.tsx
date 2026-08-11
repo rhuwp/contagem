@@ -47,7 +47,7 @@ export default function LoginPage() {
       
     } catch (err: any) {
       // Se o backend retornar erro (senha errada, etc), mostramos na tela
-      setErro(err.response?.data?.erro || 'Erro ao conectar com o servidor.');
+      setErro(err.response?.data?.erro || 'Erro ao conectar, verifique suas credenciais.');
     } finally {
       setLoading(false);
     }
@@ -63,7 +63,7 @@ export default function LoginPage() {
             <Lock className="text-white w-8 h-8" />
           </div>
           <h1 className="text-2xl font-bold text-slate-800">Contagem PA</h1>
-          <p className="text-slate-500 text-sm mt-1">Acesso ao Sistema Operacional</p>
+          <p className="text-slate-500 text-sm mt-1">Acesso ao Sistema</p>
         </div>
 
         {/* Mensagem de Erro */}
@@ -77,7 +77,7 @@ export default function LoginPage() {
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
             <label className="block text-sm font-bold text-slate-700 mb-1">
-              Credencial (Usuário)
+            (Usuário)
             </label>
             <input
               type="text"

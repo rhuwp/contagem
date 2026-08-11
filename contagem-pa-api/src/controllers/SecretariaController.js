@@ -70,7 +70,7 @@ const SecretariaController = {
           p.*,
           u.nome AS secretaria_nome,
           (SELECT COUNT(*)::int FROM encaminhamentos_pa e
-            WHERE e.pedido_cota_id = p.id AND e.tipo_envio = 'NORMAL') AS total_encaminhados
+            WHERE e.pedido_cota_id = p.id) AS total_encaminhados
         FROM pedidos_cota p
         LEFT JOIN usuarios u ON u.id::text = p.secretaria_id::text
         WHERE p.status IN ('ABERTO', 'PAUSADO')

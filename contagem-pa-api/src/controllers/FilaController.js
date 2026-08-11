@@ -97,22 +97,53 @@ const FilaController = {
     try {
       await client.query('BEGIN');
 
-      // 1. Busca os nomes legíveis para salvar no banco
+      // 1. Busca o nome do operador para o log
       const { rows: userRows } = await client.query('SELECT nome FROM usuarios WHERE id = $1', [usuario_pa_id]);
       const usuarioNome = userRows[0]?.nome || 'Operador Desconhecido';
 
-      const { rows: cotaRows } = await client.query('SELECT medico_nome FROM pedidos_cota WHERE id = $1', [pedido_cota_id]);
-      const medicoNome = cotaRows[0]?.medico_nome || 'Médico Desconhecido';
+      // 2. Busca e TRAVA a cota de destino (mesma proteção do fluxo normal)
+      const { rows: cotaRows } = await client.query(
+        'SELECT medico_nome, quantidade_restante, fila_continua, status FROM pedidos_cota WHERE id = $1 FOR UPDATE',
+        [pedido_cota_id]
+      );
 
-      // 2. MOVE o médico para o final da fila de rodízio (sem decrementar quantidade)
-      const queryRotation = `
-        UPDATE pedidos_cota 
-        SET ultimo_encaminhamento_em = NOW(), atualizado_em = NOW()
-        WHERE id = $1
-      `;
-      await client.query(queryRotation, [pedido_cota_id]);
+      if (cotaRows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ erro: 'Cota não encontrada.' });
+      }
 
-      // 3. Registra o log legível
+      const cota = cotaRows[0];
+      const medicoNome = cota.medico_nome || 'Médico Desconhecido';
+
+      if (cota.status !== 'ABERTO') {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ erro: 'Esta cota não está mais ativa.' });
+      }
+      if (!cota.fila_continua && cota.quantidade_restante <= 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ erro: 'Este médico não possui mais vagas disponíveis.' });
+      }
+
+      // 3. CONSOME a vaga (igual ao fluxo normal) e move o médico para o fim do rodízio.
+      // Cota contínua: só gira o rodízio, sem decrementar.
+      if (cota.fila_continua) {
+        await client.query(`
+          UPDATE pedidos_cota
+          SET ultimo_encaminhamento_em = NOW(), atualizado_em = NOW()
+          WHERE id = $1
+        `, [pedido_cota_id]);
+      } else {
+        const novaQuantidade = cota.quantidade_restante - 1;
+        const novoStatus = novaQuantidade === 0 ? 'CONCLUIDO' : 'ABERTO';
+
+        await client.query(`
+          UPDATE pedidos_cota
+          SET quantidade_restante = $1, status = $2, ultimo_encaminhamento_em = NOW(), atualizado_em = NOW()
+          WHERE id = $3
+        `, [novaQuantidade, novoStatus, pedido_cota_id]);
+      }
+
+      // 4. Registra o log legível
       const queryLog = `
         INSERT INTO encaminhamentos_pa (
           pedido_cota_id, usuario_pa_id, paciente_identificador, tipo_envio, justificativa, medico_nome, usuario_nome

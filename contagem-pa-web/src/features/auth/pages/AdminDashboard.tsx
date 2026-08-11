@@ -200,10 +200,10 @@ export default function AdminDashboard() {
           <p className="text-slate-500 text-sm">Sincronizando dados locais e Oracle MV...</p>
         </main>
       ) : (
-        <main className="flex-1 p-6 max-w-6xl mx-auto w-full space-y-6 fade-in">
+        <main className="flex-1 p-4 md:p-6 max-w-6xl mx-auto w-full space-y-6 fade-in">
 
           {/* ===== TABS ===== */}
-          <div className="inline-flex bg-slate-200/70 p-1 rounded-xl">
+          <div className="inline-flex flex-wrap bg-slate-200/70 p-1 rounded-xl gap-1">
             <TabButton
               ativa={activeTab === 'usuarios'}
               onClick={() => setActiveTab('usuarios')}
@@ -293,7 +293,7 @@ export default function AdminDashboard() {
                     <h2 className="text-sm font-semibold text-slate-800">Colaboradores</h2>
                     <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{usuariosFiltrados.length}</span>
                   </div>
-                  <div className="relative w-64">
+                  <div className="relative w-full sm:w-64">
                     <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                     <input
                       type="text"
@@ -410,7 +410,7 @@ export default function AdminDashboard() {
                     <h2 className="text-sm font-semibold text-slate-800">Queixas Vinculadas</h2>
                     <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{queixasFiltradas.length}</span>
                   </div>
-                  <div className="relative w-64">
+                  <div className="relative w-full sm:w-64">
                     <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                     <input
                       type="text"

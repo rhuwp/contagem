@@ -10,8 +10,10 @@ pool.on('connect', () => {
 });
 
 pool.on('error', (err) => {
-  console.error('Erro critico na conexao com PostgreSQL:', err);
-  process.exit(-1);
+  // NÃO derruba o processo: o pool descarta a conexão com problema e
+  // abre outra na próxima consulta. Derrubar aqui mataria o serviço
+  // inteiro por um soluço de rede.
+  console.error('Erro no pool do PostgreSQL (conexão ociosa):', err.message);
 });
 
 module.exports = pool;

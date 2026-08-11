@@ -25,6 +25,18 @@ export default function SecretariaDashboard() {
 
   useEffect(() => {
     carregarDados();
+
+    // Fila em "tempo real": mesma cadência do painel do PA (5s, só com a aba visível).
+    // Apenas as cotas são repuxadas — o catálogo de médicos (Oracle) fica no carregamento inicial.
+    const soVisivel = () => {
+      if (document.visibilityState === 'visible') carregarCotas();
+    };
+    const intervalo = setInterval(soVisivel, 5000);
+    document.addEventListener('visibilitychange', soVisivel);
+    return () => {
+      clearInterval(intervalo);
+      document.removeEventListener('visibilitychange', soVisivel);
+    };
   }, []);
 
   const carregarDados = async () => {
@@ -37,6 +49,15 @@ export default function SecretariaDashboard() {
       setCotasAtivas(resCotas.data);
     } catch (error) {
       console.error("Erro na leitura de dados operacionais", error);
+    }
+  };
+
+  const carregarCotas = async () => {
+    try {
+      const resCotas = await api.get('/secretaria/cotas-ativas');
+      setCotasAtivas(resCotas.data);
+    } catch (error) {
+      console.error("Erro ao atualizar a fila de cotas", error);
     }
   };
 
@@ -114,7 +135,7 @@ export default function SecretariaDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col">
-      <header className="bg-white shadow-sm px-8 py-4 flex justify-between items-center">
+      <header className="bg-white shadow-sm px-4 md:px-8 py-4 flex flex-wrap justify-between items-center gap-y-2">
         <div className="flex items-center gap-3">
           <div className="bg-blue-600 p-2 rounded-lg">
             <ClipboardList className="text-white w-6 h-6" />
@@ -140,7 +161,7 @@ export default function SecretariaDashboard() {
         </div>
       </header>
 
-      <main className="flex-1 p-8 grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto w-full">
+      <main className="flex-1 p-4 md:p-8 grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8 max-w-7xl mx-auto w-full">
         
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">

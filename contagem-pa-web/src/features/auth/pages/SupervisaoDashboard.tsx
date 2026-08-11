@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../../../lib/axios';
 import { useAuthStore } from '../../../app/store/authStore';
 import PassagemPlantao from '../../../components/PassagemPlantao';
+import { obterDadosRelatorio } from '../../../lib/relatorioPlantao';
 import {
   LogOut, Activity, AlertCircle, ClipboardCheck,
   Calendar, Timer, UserCheck, Stethoscope, Hourglass, RefreshCw,
@@ -18,9 +19,12 @@ export default function SupervisaoDashboard() {
   useEffect(() => {
     carregarDashboard();
     const hoje = new Date().toLocaleDateString('en-CA');
-    let intervalo: any;
+    let intervalo: ReturnType<typeof setInterval> | undefined;
     if (dataFiltro === hoje) {
-      intervalo = setInterval(carregarDashboard, 30000); 
+      // Polling só com a aba visível
+      intervalo = setInterval(() => {
+        if (document.visibilityState === 'visible') carregarDashboard();
+      }, 30000);
     }
     return () => clearInterval(intervalo);
   }, [dataFiltro]);
@@ -41,13 +45,13 @@ export default function SupervisaoDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-      <header className="bg-white shadow-sm px-8 py-4 flex justify-between items-center border-b-2 border-slate-200 sticky top-0 z-10">
+      <header className="bg-white shadow-sm px-4 md:px-8 py-4 flex flex-wrap justify-between items-center gap-y-3 border-b-2 border-slate-200 sticky top-0 z-10">
         <div className="flex items-center gap-3">
           <Activity className="text-purple-600 w-8 h-8" />
           <h1 className="text-2xl font-black text-slate-800 tracking-tight">SUPERVISÃO IPO</h1>
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-2 md:gap-4">
           <div className="flex items-center gap-2 bg-white border-2 border-purple-100 rounded-xl px-4 py-2 shadow-sm">
             <Calendar className="w-5 h-5 text-purple-600" />
             <input 
@@ -75,10 +79,10 @@ export default function SupervisaoDashboard() {
         </div>
       </header>
 
-      <main className="p-8 max-w-[1600px] mx-auto w-full space-y-8">
-        
+      <main className="p-4 md:p-8 max-w-[1600px] mx-auto w-full space-y-6 md:space-y-8">
+
         {/* CARDS PRINCIPAIS: INDICADORES GLOBAIS */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4 md:gap-6">
           <StatCard
             title="Total Atendimentos"
             value={dados?.hospitalGlobal?.totalAtendimentos?.total}
@@ -108,7 +112,7 @@ export default function SupervisaoDashboard() {
               {dados.hospitalGlobal.temposProcesso.registrosSuspeitos} registro(s) com apontamento suspeito (etapa &gt; 4h) — provável atendimento não encerrado no MV
             </div>
           )}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-8">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-6 md:gap-8">
             <SLABadge label="Espera Recepção" value={dados?.hospitalGlobal?.temposProcesso?.esperaRecepcao} icon={<Hourglass />} />
             <SLABadge label="Tempo Cadastro" value={dados?.hospitalGlobal?.temposProcesso?.cadastro} icon={<UserCheck />} />
             <SLABadge label="Espera Médica" value={dados?.hospitalGlobal?.temposProcesso?.esperaMedica} icon={<Activity />} />
@@ -182,14 +186,10 @@ export default function SupervisaoDashboard() {
             <h2 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2 border-b pb-4">
               <ClipboardCheck className="text-purple-600 w-5 h-5" /> Formulário de Passagem de Plantão
             </h2>
+            {/* Mesmo relatório do PADashboard, seguindo a DATA SELECIONADA no calendário */}
             <PassagemPlantao
               cor="purple"
-              linhasIndicadores={[
-                `- Atendimentos Totais: ${dados?.hospitalGlobal?.totalAtendimentos?.total || 0} (PA: ${dados?.hospitalGlobal?.totalAtendimentos?.pa || 0}, Contagem: ${dados?.hospitalGlobal?.totalAtendimentos?.contagem || 0}, PA3: ${dados?.hospitalGlobal?.totalAtendimentos?.pa3 || 0})`,
-                `- Medicos Ativos: ${dados?.hospitalGlobal?.medicosAtivos?.total || 0} (PA: ${dados?.hospitalGlobal?.medicosAtivos?.pa || 0}, Contagem: ${dados?.hospitalGlobal?.medicosAtivos?.contagem || 0}, PA3: ${dados?.hospitalGlobal?.medicosAtivos?.pa3 || 0})`,
-                `- Permanencia Mediana Total: ${dados?.hospitalGlobal?.temposProcesso?.permanenciaTotal || 0} min`,
-                `- Excecoes Registradas no Rodizio: ${dados?.rodizio?.excecoesGeradas || 0}`,
-              ]}
+              obterDados={() => obterDadosRelatorio(dataFiltro)}
             />
           </div>
 
@@ -252,11 +252,19 @@ function MedicosProducao({ lista }: { lista: any[] }) {
               onClick={() => setExpandido(aberto ? null : m.medico)}
               className="w-full flex items-center justify-between p-4 text-left hover:bg-slate-50 rounded-xl transition-colors"
             >
-              <div className="flex items-center gap-3 min-w-0">
+              <div className="flex items-center gap-2 min-w-0 flex-wrap">
                 <Stethoscope className="w-4 h-4 text-slate-400 shrink-0" />
                 <span className="font-bold text-sm text-slate-800 truncate">{m.medico}</span>
+                {m.suspeitos?.length > 0 && (
+                  <span className="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> {m.suspeitos.length} apontamento(s) suspeito(s)
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-3 shrink-0 ml-4">
+                <span className="text-xs font-medium text-slate-500 hidden sm:inline" title="Tempo de consulta típico (mediana do dia)">
+                  consulta: <span className="font-bold text-slate-700">{m.medianaConsulta ?? '—'}</span> min
+                </span>
                 <span className="text-sm font-black text-slate-800">
                   {m.total} <span className="text-xs font-medium text-slate-400">atend.</span>
                 </span>
@@ -265,16 +273,38 @@ function MedicosProducao({ lista }: { lista: any[] }) {
             </button>
 
             {aberto && (
-              <div className="px-4 pb-4">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">Convênios Atendidos</p>
-                <div className="flex flex-wrap gap-2">
-                  {(m.convenios || []).map((c: any) => (
-                    <span key={c.nome} className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium px-2.5 py-1 rounded-md">
-                      {c.nome}
-                      <span className="font-black text-slate-900">{c.quantidade}</span>
-                    </span>
-                  ))}
+              <div className="px-4 pb-4 space-y-3">
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider mb-2">Convênios Atendidos</p>
+                  <div className="flex flex-wrap gap-2">
+                    {(m.convenios || []).map((c: any) => (
+                      <span key={c.nome} className="inline-flex items-center gap-1.5 bg-slate-50 border border-slate-200 text-slate-700 text-xs font-medium px-2.5 py-1 rounded-md">
+                        {c.nome}
+                        <span className="font-black text-slate-900">{c.quantidade}</span>
+                      </span>
+                    ))}
+                  </div>
                 </div>
+
+                {/* Apontamentos suspeitos: provável registro não encerrado no MV */}
+                {m.suspeitos?.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <p className="text-xs font-bold text-amber-800 mb-2 flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      Apontamentos suspeitos — provável atendimento não encerrado no MV
+                    </p>
+                    <div className="space-y-1">
+                      {m.suspeitos.map((s: any, i: number) => (
+                        <p key={i} className="text-xs text-amber-900">
+                          <span className="font-semibold">{s.paciente}</span> — {s.motivo}
+                        </p>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-amber-700 mt-2">
+                      Estes registros não entram no tempo de consulta típico do médico. Solicite o encerramento no MV.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>
