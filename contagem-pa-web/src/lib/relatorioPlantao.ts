@@ -1,18 +1,31 @@
 import { api } from './axios';
 
 // Dados estruturados do relatório de passagem de plantão — buscados FRESCOS
-// do banco na hora de gerar. Compartilhado entre PADashboard e Supervisão,
-// e entre os dois formatos de saída (PDF e Excel).
+// do banco na hora de gerar. Compartilhado entre PA e Supervisão, e entre
+// os dois formatos de saída (PDF e Excel).
 export interface DadosRelatorio {
   dataReferencia: string;
   indicadores: any;
-  fila1: any[];
-  fila2: any[];
-  excecoes: any[];
+  cotas: any[];     // cotas do dia, das duas filas (campo `fila`)
+  excecoes: any[];  // furos do dia (campo `fila`)
 }
 
+// Resumo agregado de uma fila: uma linha por médico
+export interface ResumoMedico {
+  medico: string;
+  pedidos: number;
+  vagas: number;        // soma das vagas solicitadas (cotas normais)
+  continua: boolean;    // possui ao menos uma cota contínua
+  encaminhados: number; // envios normais
+  excecoes: number;     // envios por exceção
+}
+
+export const NOME_FILA: Record<string, string> = {
+  CONTAGEM: 'Contagem',
+  CONTAGEM_3: 'Contagem 3',
+};
+
 // data opcional (AAAA-MM-DD): sem ela, o backend usa a data atual.
-// A Supervisão passa a data selecionada no calendário.
 export async function obterDadosRelatorio(data?: string): Promise<DadosRelatorio> {
   const sufixo = data ? `?data=${data}` : '';
   const [resInd, resRel] = await Promise.all([
@@ -23,14 +36,40 @@ export async function obterDadosRelatorio(data?: string): Promise<DadosRelatorio
   return {
     dataReferencia: resRel.data?.dataReferencia || data || new Date().toLocaleDateString('en-CA'),
     indicadores: resInd.data,
-    fila1: resRel.data?.fila1 || [],
-    fila2: resRel.data?.fila2 || [],
+    cotas: resRel.data?.cotas || [],
     excecoes: resRel.data?.excecoes || [],
   };
 }
 
+// Agrega as cotas de uma fila em uma linha por médico
+export function resumirPorMedico(cotas: any[], fila: string): ResumoMedico[] {
+  const mapa = new Map<string, ResumoMedico>();
+
+  cotas.filter(c => c.fila === fila).forEach((c: any) => {
+    const r = mapa.get(c.medico_nome) || {
+      medico: c.medico_nome, pedidos: 0, vagas: 0, continua: false, encaminhados: 0, excecoes: 0,
+    };
+    r.pedidos += 1;
+    if (c.fila_continua) r.continua = true;
+    else r.vagas += c.quantidade_solicitada || 0;
+    r.encaminhados += c.encaminhados_normais || 0;
+    r.excecoes += c.encaminhados_excecao || 0;
+    mapa.set(c.medico_nome, r);
+  });
+
+  return [...mapa.values()].sort((a, b) => (b.encaminhados + b.excecoes) - (a.encaminhados + a.excecoes));
+}
+
 const hora = (ts: string) =>
   new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+const linhaMedico = (r: ResumoMedico): string => {
+  const vagas = r.continua
+    ? (r.vagas > 0 ? `${r.vagas} vaga(s) + cota continua` : 'cota continua')
+    : `${r.vagas} vaga(s)`;
+  const excecao = r.excecoes > 0 ? `, ${r.excecoes} por excecao` : '';
+  return `Dr(a). ${r.medico} — ${r.pedidos} pedido(s), ${vagas}, ${r.encaminhados} paciente(s) encaminhado(s)${excecao}.`;
+};
 
 // Converte os dados estruturados nas linhas do PDF ("## " = título de seção)
 export function montarLinhas(d: DadosRelatorio): string[] {
@@ -42,31 +81,19 @@ export function montarLinhas(d: DadosRelatorio): string[] {
     `Atendimentos no dia: ${ind?.totalAtendimentos || 0}`,
     `Espera Recepcao (mediana): ${ind?.tempos?.esperaRecepcao || 0} min   |   Tempo de Cadastro (mediana): ${ind?.tempos?.cadastro || 0} min`,
     `Espera Medica (mediana): ${ind?.tempos?.esperaMedica || 0} min   |   Permanencia Total (mediana): ${ind?.tempos?.permanenciaTotal || 0} min`,
-    '## Fila 1 - Cotas (Secretarias)',
   ];
 
-  if (!d.fila1.length) {
-    linhas.push('Nenhuma cota registrada na data.');
-  } else {
-    d.fila1.forEach((c: any) => {
-      if (c.fila_continua) {
-        linhas.push(`Dr(a). ${c.medico_nome} - cota continua aberta por ${c.secretaria_nome || 'N/A'}: ${c.total_encaminhados || 0} paciente(s) encaminhado(s). [${c.status}]`);
-      } else {
-        linhas.push(`Dr(a). ${c.medico_nome} solicitou ${c.quantidade_solicitada} cota(s) (aberta por ${c.secretaria_nome || 'N/A'}): ${c.total_encaminhados || 0} paciente(s) encaminhado(s), ${c.quantidade_restante} vaga(s) restante(s). [${c.status}]`);
-      }
-    });
-  }
-
-  linhas.push('## Fila 2 - Fila da Recepcao');
-  if (!d.fila2.length) {
-    linhas.push('Nenhum medico passou pela fila da recepcao na data.');
-  } else {
-    d.fila2.forEach((f: any) => {
-      const situacao = f.status === 'ATIVO'
-        ? 'ainda na fila'
-        : `removido${f.removido_por_nome ? ` por ${f.removido_por_nome}` : ''}`;
-      linhas.push(`Foram enviados ${f.total_encaminhados || 0} paciente(s) para Dr(a). ${f.medico_nome} (adicionado por ${f.adicionado_por_nome || 'N/A'}, ${situacao}).`);
-    });
+  for (const fila of ['CONTAGEM', 'CONTAGEM_3']) {
+    linhas.push(`## Fila ${NOME_FILA[fila]} — Resumo por Medico`);
+    const resumo = resumirPorMedico(d.cotas, fila);
+    if (!resumo.length) {
+      linhas.push('Nenhum pedido registrado na data.');
+    } else {
+      resumo.forEach(r => linhas.push(linhaMedico(r)));
+      const totPedidos = resumo.reduce((a, r) => a + r.pedidos, 0);
+      const totEnc = resumo.reduce((a, r) => a + r.encaminhados + r.excecoes, 0);
+      linhas.push(`TOTAL DA FILA: ${totPedidos} pedido(s), ${totEnc} paciente(s) encaminhado(s).`);
+    }
   }
 
   linhas.push('## Furos de Fila (Excecoes)');
@@ -74,7 +101,7 @@ export function montarLinhas(d: DadosRelatorio): string[] {
     linhas.push('Nenhum furo de fila registrado na data.');
   } else {
     d.excecoes.forEach((e: any) => {
-      linhas.push(`${hora(e.criado_em)} - Paciente ${e.paciente_identificador} enviado a Dr(a). ${e.medico_nome || 'N/A'} pelo operador ${e.usuario_nome || 'N/A'}. Justificativa: ${e.justificativa || 'nao informada'}`);
+      linhas.push(`[${NOME_FILA[e.fila] || e.fila}] ${hora(e.criado_em)} — Paciente ${e.paciente_identificador} enviado a Dr(a). ${e.medico_nome || 'N/A'} pelo operador ${e.usuario_nome || 'N/A'}. Justificativa: ${e.justificativa || 'nao informada'}`);
     });
   }
 

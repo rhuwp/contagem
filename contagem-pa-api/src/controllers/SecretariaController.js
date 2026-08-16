@@ -1,13 +1,17 @@
 const pool = require('../config/databasePg');
 
+// Filas de cotas disponíveis (mesma mecânica, rodízios independentes)
+const FILAS_VALIDAS = ['CONTAGEM', 'CONTAGEM_3'];
+
 const SecretariaController = {
   async abrirPedidoCota(req, res) {
-    const { medico_id, medico_nome, medico_crm, quantidade_solicitada, observacao, fila_continua } = req.body;
+    const { medico_id, medico_nome, medico_crm, quantidade_solicitada, observacao, fila_continua, fila } = req.body;
     // SEGURANÇA: a secretária é identificada pelo token, não pelo body (evita log forjado)
     const secretaria_id = req.usuarioLogado.id;
 
     const continua = fila_continua === true;
     const qtd = Number(quantidade_solicitada);
+    const filaDestino = FILAS_VALIDAS.includes(fila) ? fila : 'CONTAGEM';
 
     if (!medico_id || !medico_nome) {
       return res.status(400).json({ erro: 'Dados do médico ausentes.' });
@@ -22,31 +26,34 @@ const SecretariaController = {
     try {
       await client.query('BEGIN');
 
-      // TRAVA DE DUPLICIDADE: um médico só pode ter UMA cota ativa por vez
+      // TRAVA DE DUPLICIDADE: um médico só pode ter UMA cota ativa POR FILA
       const { rows: existentes } = await client.query(
-        "SELECT id FROM pedidos_cota WHERE medico_id = $1 AND status IN ('ABERTO', 'PAUSADO') LIMIT 1 FOR UPDATE",
-        [String(medico_id)]
+        "SELECT id FROM pedidos_cota WHERE medico_id = $1 AND fila = $2 AND status IN ('ABERTO', 'PAUSADO') LIMIT 1 FOR UPDATE",
+        [String(medico_id), filaDestino]
       );
       if (existentes.length > 0) {
         await client.query('ROLLBACK');
-        return res.status(409).json({ erro: 'Este médico já possui uma cota ativa na fila. Cancele a cota atual antes de abrir outra.' });
+        return res.status(409).json({ erro: 'Este médico já possui uma cota ativa nesta fila. Cancele a cota atual antes de abrir outra.' });
       }
 
-      // RESET DA FILA: Quando entra um médico novo, todos voltam ao estado inicial de tempo
-      // para que a ordem de criação defina o primeiro ciclo.
-      await client.query("UPDATE pedidos_cota SET ultimo_encaminhamento_em = NULL WHERE status = 'ABERTO'");
+      // RESET DA FILA: quando entra um médico novo, todos voltam ao estado inicial
+      // de tempo — RESTRITO à própria fila (os rodízios são independentes)
+      await client.query(
+        "UPDATE pedidos_cota SET ultimo_encaminhamento_em = NULL WHERE status = 'ABERTO' AND fila = $1",
+        [filaDestino]
+      );
 
       const queryInsert = `
         INSERT INTO pedidos_cota (
           medico_id, medico_nome, medico_crm, secretaria_id,
-          quantidade_solicitada, quantidade_restante, status, observacao, fila_continua
+          quantidade_solicitada, quantidade_restante, status, observacao, fila_continua, fila
         )
-        VALUES ($1, $2, $3, $4, $5, $6, 'ABERTO', $7, $8) RETURNING *;
+        VALUES ($1, $2, $3, $4, $5, $6, 'ABERTO', $7, $8, $9) RETURNING *;
       `;
 
       const values = [
         String(medico_id), medico_nome, medico_crm, secretaria_id,
-        continua ? 0 : qtd, continua ? 0 : qtd, observacao, continua
+        continua ? 0 : qtd, continua ? 0 : qtd, observacao, continua, filaDestino
       ];
       const { rows } = await client.query(queryInsert, values);
 
@@ -62,9 +69,12 @@ const SecretariaController = {
   },
 
   async listarCotasAtivas(req, res) {
+    const { fila } = req.query;
+    const filaDestino = FILAS_VALIDAS.includes(fila) ? fila : 'CONTAGEM';
+
     try {
-      // ORDENAÇÃO DO RODÍZIO: Quem nunca atendeu (NULL) primeiro, seguido de quem atendeu há mais tempo.
-      // Inclui o nome de quem abriu a cota e o total já encaminhado (útil para cotas contínuas).
+      // ORDENAÇÃO DO RODÍZIO: quem nunca atendeu (NULL) primeiro, depois quem atendeu há mais tempo.
+      // Inclui o nome de quem abriu a cota e o total já encaminhado.
       const query = `
         SELECT
           p.*,
@@ -73,10 +83,10 @@ const SecretariaController = {
             WHERE e.pedido_cota_id = p.id) AS total_encaminhados
         FROM pedidos_cota p
         LEFT JOIN usuarios u ON u.id::text = p.secretaria_id::text
-        WHERE p.status IN ('ABERTO', 'PAUSADO')
+        WHERE p.status IN ('ABERTO', 'PAUSADO') AND p.fila = $1
         ORDER BY p.ultimo_encaminhamento_em ASC NULLS FIRST, p.criado_em ASC;
       `;
-      const { rows } = await pool.query(query);
+      const { rows } = await pool.query(query, [filaDestino]);
       return res.status(200).json(rows);
     } catch (error) {
       console.error('Erro ao listar cotas:', error);
@@ -111,6 +121,40 @@ const SecretariaController = {
     } catch (error) {
       console.error('Erro ao cancelar cota:', error);
       return res.status(500).json({ erro: 'Erro ao cancelar.' });
+    }
+  },
+
+  // Pedidos do dia da PRÓPRIA secretária logada (todas as filas, incluindo cancelados).
+  // Alimenta o contador da tela e o relatório PDF pessoal.
+  async meusPedidos(req, res) {
+    const secretaria_id = req.usuarioLogado.id;
+
+    try {
+      const { rows } = await pool.query(`
+        SELECT
+          fila, medico_nome, medico_crm, status, fila_continua,
+          quantidade_solicitada, quantidade_restante, criado_em, atualizado_em,
+          (SELECT COUNT(*)::int FROM encaminhamentos_pa e
+            WHERE e.pedido_cota_id = p.id) AS total_encaminhados
+        FROM pedidos_cota p
+        WHERE p.secretaria_id = $1
+          AND (p.criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (NOW() AT TIME ZONE 'America/Sao_Paulo')::date
+        ORDER BY p.criado_em ASC
+      `, [secretaria_id]);
+
+      const resumo = {
+        total: rows.length,
+        cancelados: rows.filter(r => r.status === 'CANCELADO').length,
+        porFila: {
+          CONTAGEM: rows.filter(r => r.fila === 'CONTAGEM').length,
+          CONTAGEM_3: rows.filter(r => r.fila === 'CONTAGEM_3').length
+        }
+      };
+
+      return res.status(200).json({ resumo, pedidos: rows });
+    } catch (erro) {
+      console.error('Erro ao listar meus pedidos:', erro);
+      return res.status(500).json({ erro: 'Falha ao buscar os seus pedidos do dia.' });
     }
   }
 };

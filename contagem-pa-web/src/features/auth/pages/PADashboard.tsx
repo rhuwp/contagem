@@ -6,9 +6,17 @@ import PassagemPlantao from '../../../components/PassagemPlantao';
 import { obterDadosRelatorio } from '../../../lib/relatorioPlantao';
 import {
   LogOut, Users, ArrowRightCircle, AlertTriangle, Stethoscope, Search,
-  ChevronDown, ChevronUp, ClipboardCheck, UserPlus, Trash2,
+  ChevronDown, ChevronUp, ClipboardCheck,
   Activity, Hourglass, UserCheck, Timer
 } from 'lucide-react';
+
+type Fila = 'CONTAGEM' | 'CONTAGEM_3';
+type Visao = Fila | 'PLANTAO';
+
+const NOME_FILA: Record<Fila, string> = {
+  CONTAGEM: 'Contagem',
+  CONTAGEM_3: 'Contagem 3',
+};
 
 // ==========================================
 // 1. MOTOR DE CLASSIFICAÇÃO OTORRINO (TAXONOMIA)
@@ -50,7 +58,6 @@ const QueixasViewer = ({ queixas }: { queixas: string[] }) => {
 
   return (
     <div className="mt-2.5 w-full">
-      {/* Botões Agrupadores */}
       <div className="flex flex-wrap gap-1.5">
         {Object.entries(categorias).map(([nome, itens]) => {
           if (itens.length === 0) return null;
@@ -76,7 +83,6 @@ const QueixasViewer = ({ queixas }: { queixas: string[] }) => {
         })}
       </div>
 
-      {/* Painel de Expansão (Detalhes) */}
       {categoriaAtiva && categorias[categoriaAtiva].length > 0 && (
         <div className="mt-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg flex flex-wrap gap-1.5">
           {categorias[categoriaAtiva].map((q, idx) => (
@@ -99,20 +105,14 @@ const QueixasViewer = ({ queixas }: { queixas: string[] }) => {
 export default function PADashboard() {
   const { user, logout } = useAuthStore();
   const mostrarModal = useModalStore((state) => state.mostrarModal);
-  const mostrarConfirmacao = useModalStore((state) => state.mostrarConfirmacao);
 
   const [fila, setFila] = useState<any[]>([]);
   const [medicosCatalogo, setMedicosCatalogo] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // Indicadores do dia (medianas) e navegação Despacho / Fila / Plantão
+  // Indicadores do dia (medianas) e navegação Contagem / Contagem 3 / Plantão
   const [indicadores, setIndicadores] = useState<any>(null);
-  const [visao, setVisao] = useState<'despacho' | 'fila' | 'plantao'>('despacho');
-
-  // Fila da Recepção (sem cotas, montada manualmente)
-  const [filaRecepcao, setFilaRecepcao] = useState<any[]>([]);
-  const [buscaFilaRecep, setBuscaFilaRecep] = useState('');
-  const [mostrarDropdownRecep, setMostrarDropdownRecep] = useState(false);
+  const [visao, setVisao] = useState<Visao>('CONTAGEM');
 
   // Estados dos formulários
   const [identificadorPaciente, setIdentificadorPaciente] = useState('');
@@ -124,37 +124,52 @@ export default function PADashboard() {
   const [buscaMedico, setBuscaMedico] = useState('');
   const [mostrarDropdown, setMostrarDropdown] = useState(false);
 
+  // A fila em operação (na aba Plantão mantém a última selecionada)
+  const filaOperacao: Fila = visao === 'PLANTAO' ? 'CONTAGEM' : visao;
+
+  // Catálogo + indicadores: uma vez no mount, com polling leve dos indicadores
   useEffect(() => {
     carregarMedicosCatalogo();
-    carregarFila();
     carregarIndicadores();
-    carregarFilaRecepcao();
 
-    // Polling só com a aba VISÍVEL: aba esquecida em segundo plano não gera requests
     const soVisivel = (fn: () => void) => () => {
       if (document.visibilityState === 'visible') fn();
     };
-    const intervalo = setInterval(soVisivel(carregarFila), 5000);
     const intervaloInd = setInterval(soVisivel(carregarIndicadores), 60000);
-    const intervaloRecep = setInterval(soVisivel(carregarFilaRecepcao), 15000);
 
-    // Ao voltar para a aba, atualiza tudo imediatamente
     const aoVoltar = () => {
-      if (document.visibilityState === 'visible') {
-        carregarFila();
-        carregarIndicadores();
-        carregarFilaRecepcao();
-      }
+      if (document.visibilityState === 'visible') carregarIndicadores();
     };
     document.addEventListener('visibilitychange', aoVoltar);
 
     return () => {
-      clearInterval(intervalo);
       clearInterval(intervaloInd);
-      clearInterval(intervaloRecep);
       document.removeEventListener('visibilitychange', aoVoltar);
     };
   }, []);
+
+  // Fila da aba selecionada: recarrega ao trocar de aba + polling 5s (aba visível)
+  useEffect(() => {
+    if (visao === 'PLANTAO') return;
+    const filaSel = visao;
+
+    // Limpa o formulário de exceção ao trocar de fila (a cota é de outra fila)
+    setModoExcecao(false);
+    setCotaExcecaoId('');
+    setBuscaMedico('');
+    setJustificativa('');
+
+    carregarFila(filaSel);
+    const soVisivel = () => {
+      if (document.visibilityState === 'visible') carregarFila(filaSel);
+    };
+    const intervalo = setInterval(soVisivel, 5000);
+    document.addEventListener('visibilitychange', soVisivel);
+    return () => {
+      clearInterval(intervalo);
+      document.removeEventListener('visibilitychange', soVisivel);
+    };
+  }, [visao]);
 
   const carregarIndicadores = async () => {
     try {
@@ -163,54 +178,6 @@ export default function PADashboard() {
     } catch (error) {
       console.error("Erro ao carregar indicadores do PA:", error);
     }
-  };
-
-  const carregarFilaRecepcao = async () => {
-    try {
-      const response = await api.get('/pa/fila-recepcao');
-      setFilaRecepcao(response.data);
-    } catch (error) {
-      console.error("Erro ao carregar a fila da recepção:", error);
-    }
-  };
-
-  const handleAdicionarFilaRecep = async (medico: any) => {
-    try {
-      await api.post('/pa/fila-recepcao', {
-        medico_id: medico.id,
-        medico_nome: medico.nome,
-        medico_crm: medico.crm
-      });
-      setBuscaFilaRecep('');
-      setMostrarDropdownRecep(false);
-      carregarFilaRecepcao();
-    } catch (error: any) {
-      mostrarModal('erro', 'Falha ao Adicionar', error.response?.data?.erro || 'Não foi possível adicionar o médico à fila.');
-    }
-  };
-
-  const handleEncaminharRecep = async (id: number, desfazer = false) => {
-    try {
-      await api.put(`/pa/fila-recepcao/${id}/encaminhar`, { desfazer });
-      carregarFilaRecepcao();
-    } catch (error: any) {
-      mostrarModal('erro', 'Falha ao Atualizar', error.response?.data?.erro || 'Não foi possível atualizar o contador.');
-    }
-  };
-
-  const handleRemoverFilaRecep = (id: number, nome: string) => {
-    mostrarConfirmacao(
-      'Remover da Fila',
-      `Remover ${nome} da fila da recepção?`,
-      async () => {
-        try {
-          await api.delete(`/pa/fila-recepcao/${id}`);
-          carregarFilaRecepcao();
-        } catch (error: any) {
-          mostrarModal('erro', 'Falha ao Remover', error.response?.data?.erro || 'Não foi possível remover o médico da fila.');
-        }
-      }
-    );
   };
 
   const carregarMedicosCatalogo = async () => {
@@ -222,9 +189,9 @@ export default function PADashboard() {
     }
   };
 
-  const carregarFila = async () => {
+  const carregarFila = async (filaSel: Fila) => {
     try {
-      const response = await api.get('/secretaria/cotas-ativas');
+      const response = await api.get(`/secretaria/cotas-ativas?fila=${filaSel}`);
       const filaAtiva = response.data.filter((c: any) => c.status === 'ABERTO' && (c.fila_continua || c.quantidade_restante > 0));
       setFila(filaAtiva);
     } catch (error) {
@@ -239,12 +206,13 @@ export default function PADashboard() {
     setLoading(true);
     try {
       const response = await api.post('/pa/encaminhar', {
-        paciente_identificador: identificadorPaciente
+        paciente_identificador: identificadorPaciente,
+        fila: filaOperacao
       });
 
       mostrarModal('sucesso', 'Paciente Encaminhado', `Dr(a). ${response.data.medico_nome || 'Médico do Rodízio'}`);
       setIdentificadorPaciente('');
-      carregarFila();
+      carregarFila(filaOperacao);
     } catch (error: any) {
       mostrarModal('erro', 'Falha no Encaminhamento', error.response?.data?.erro || 'Erro ao encaminhar paciente. A fila pode estar vazia.');
     } finally {
@@ -272,7 +240,7 @@ export default function PADashboard() {
       setBuscaMedico('');
       setJustificativa('');
       setModoExcecao(false);
-      carregarFila();
+      carregarFila(filaOperacao);
     } catch (error: any) {
       mostrarModal('erro', 'Falha na Exceção', error.response?.data?.erro || 'Erro ao registar exceção.');
     } finally {
@@ -288,12 +256,6 @@ export default function PADashboard() {
       queixas: medicoInfo?.queixas || []
     };
   });
-
-  // Fila da Recepção: médicos do catálogo que casam com a busca e ainda não estão na fila
-  const medicosDisponiveisRecep = medicosCatalogo.filter(m =>
-    m.nome.toLowerCase().includes(buscaFilaRecep.toLowerCase()) &&
-    !filaRecepcao.some(f => String(f.medico_id) === String(m.id))
-  );
 
   // Com um médico já selecionado, o campo contém "Dr(a). NOME" — texto que não casaria
   // com o filtro. Nesse caso mostramos a fila completa (com o selecionado em destaque).
@@ -351,34 +313,32 @@ export default function PADashboard() {
         {/* ===== NAVEGAÇÃO ===== */}
         <div className="inline-flex flex-wrap bg-slate-200/70 p-1 rounded-xl gap-1">
           <TabButton
-            ativa={visao === 'despacho'}
-            onClick={() => setVisao('despacho')}
+            ativa={visao === 'CONTAGEM'}
+            onClick={() => setVisao('CONTAGEM')}
             icone={<ArrowRightCircle className="w-4 h-4" />}
-            label="Despacho"
+            label="Contagem"
           />
           <TabButton
-            ativa={visao === 'fila'}
-            onClick={() => setVisao('fila')}
-            icone={<Users className="w-4 h-4" />}
-            label="Fila da Recepção"
-            badge={filaRecepcao.length || undefined}
+            ativa={visao === 'CONTAGEM_3'}
+            onClick={() => setVisao('CONTAGEM_3')}
+            icone={<ArrowRightCircle className="w-4 h-4" />}
+            label="Contagem 3"
           />
           <TabButton
-            ativa={visao === 'plantao'}
-            onClick={() => setVisao('plantao')}
+            ativa={visao === 'PLANTAO'}
+            onClick={() => setVisao('PLANTAO')}
             icone={<ClipboardCheck className="w-4 h-4" />}
             label="Passagem de Plantão"
           />
         </div>
 
-        {/* ===== VISÃO: DESPACHO ===== */}
-        {visao === 'despacho' ? (
+        {visao !== 'PLANTAO' ? (
+          /* ===== VISÃO: DESPACHO (Contagem / Contagem 3) ===== */
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
             {/* Painel de Despacho */}
-            {/* sem overflow-hidden: os dropdowns de busca precisam flutuar sobre o card */}
             <section className="lg:col-span-4 bg-white rounded-xl border border-slate-200 shadow-sm">
-              <CardHeader icone={<ArrowRightCircle className="w-4 h-4" />} titulo="Painel de Despacho" />
+              <CardHeader icone={<ArrowRightCircle className="w-4 h-4" />} titulo={`Despacho — ${NOME_FILA[filaOperacao]}`} />
               <div className="p-5">
 
                 <div className="flex p-1 bg-slate-100 rounded-lg mb-5 border border-slate-200">
@@ -412,7 +372,7 @@ export default function PADashboard() {
                         autoFocus
                       />
                       <p className="text-xs text-slate-400 mt-2">
-                        Alocação automática ao médico que aguarda há mais tempo.
+                        Alocação automática ao médico que aguarda há mais tempo na fila {NOME_FILA[filaOperacao]}.
                       </p>
                     </div>
 
@@ -425,14 +385,14 @@ export default function PADashboard() {
                       <ArrowRightCircle className="w-4 h-4" />
                     </button>
                     {filaEnriquecida.length === 0 && (
-                      <p className="text-red-500 text-xs text-center font-semibold">Fila operacional vazia.</p>
+                      <p className="text-red-500 text-xs text-center font-semibold">Fila {NOME_FILA[filaOperacao]} vazia. Aguarde a inserção de cotas.</p>
                     )}
                   </form>
                 ) : (
                   <form onSubmit={handleEncaminharExcecao} className="space-y-4">
                     <div className="bg-amber-50 text-amber-800 p-3 rounded-lg border border-amber-200 text-xs flex items-start gap-2">
                       <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-                      <p><strong>Auditoria:</strong> envios por exceção movem o médico selecionado para o final do rodízio.</p>
+                      <p><strong>Auditoria:</strong> envios por exceção consomem a vaga e movem o médico para o final do rodízio.</p>
                     </div>
 
                     <div>
@@ -522,7 +482,7 @@ export default function PADashboard() {
                   <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
                     <Stethoscope className="w-4 h-4" />
                   </div>
-                  <h2 className="text-sm font-semibold text-slate-800">Cadeia de Alocação</h2>
+                  <h2 className="text-sm font-semibold text-slate-800">Cadeia de Alocação — {NOME_FILA[filaOperacao]}</h2>
                 </div>
                 <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
                   {filaEnriquecida.length} médico(s) na fila
@@ -533,8 +493,8 @@ export default function PADashboard() {
                 {filaEnriquecida.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-16 text-slate-400">
                     <Users className="w-12 h-12 mb-3 opacity-20" />
-                    <p className="text-sm font-semibold text-slate-500">Sem médicos ativos na fila</p>
-                    <p className="text-xs">Aguardando a inserção pela secretaria.</p>
+                    <p className="text-sm font-semibold text-slate-500">Sem médicos ativos na fila {NOME_FILA[filaOperacao]}</p>
+                    <p className="text-xs">Aguardando a inserção de cotas pela secretaria.</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -591,124 +551,6 @@ export default function PADashboard() {
                               {cota.fila_continua ? '∞' : cota.quantidade_restante}
                             </div>
                           </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </section>
-          </div>
-
-        ) : visao === 'fila' ? (
-
-          /* ===== VISÃO: FILA DA RECEPÇÃO ===== */
-          <div className="max-w-3xl space-y-6">
-            {/* sem overflow-hidden: o dropdown de busca precisa flutuar sobre o card */}
-            <section className="bg-white rounded-xl border border-slate-200 shadow-sm">
-              <CardHeader icone={<UserPlus className="w-4 h-4" />} titulo="Adicionar Médico à Fila da Recepção" />
-              <div className="p-5">
-                <p className="text-xs text-slate-500 mb-3">
-                  Fila montada pela recepção. Pesquise pelo nome e clique no médico para adicioná-lo.
-                </p>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={buscaFilaRecep}
-                    onChange={(e) => { setBuscaFilaRecep(e.target.value); setMostrarDropdownRecep(true); }}
-                    onFocus={() => setMostrarDropdownRecep(true)}
-                    onBlur={() => setTimeout(() => setMostrarDropdownRecep(false), 200)}
-                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-800 focus:border-transparent outline-none bg-white pr-10 font-medium transition-all"
-                    placeholder="Digite o nome do médico..."
-                  />
-                  <Search className="w-5 h-5 text-slate-400 absolute right-3 top-3.5" />
-
-                  {mostrarDropdownRecep && buscaFilaRecep.trim() !== '' && (
-                    <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
-                      {medicosDisponiveisRecep.length === 0 ? (
-                        <div className="p-4 text-sm text-center text-slate-500">Nenhum médico disponível com esse nome.</div>
-                      ) : (
-                        medicosDisponiveisRecep.slice(0, 30).map(medico => (
-                          <div
-                            key={medico.id}
-                            onMouseDown={() => handleAdicionarFilaRecep(medico)}
-                            className="p-3 cursor-pointer border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors"
-                          >
-                            <p className="font-medium text-sm text-slate-800">{medico.nome}</p>
-                            {medico.crm && <p className="text-xs text-slate-500 mt-0.5">CRM: {medico.crm}</p>}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
-                    <Users className="w-4 h-4" />
-                  </div>
-                  <h2 className="text-sm font-semibold text-slate-800">Fila da Recepção</h2>
-                </div>
-                <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
-                  {filaRecepcao.length} médico(s)
-                </span>
-              </div>
-
-              <div className="p-5">
-                {filaRecepcao.length === 0 ? (
-                  <div className="py-10 text-center text-slate-400 text-sm font-semibold">Nenhum médico na fila da recepção.</div>
-                ) : (
-                  <div className="space-y-2.5">
-                    {filaRecepcao.map((item, index) => (
-                      <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-4 border border-slate-200 rounded-xl hover:border-slate-300 transition-colors">
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <div className="w-9 h-9 rounded-lg bg-slate-100 text-slate-500 flex items-center justify-center font-bold text-sm shrink-0">
-                            {index + 1}º
-                          </div>
-                          <div className="min-w-0">
-                            <p className="font-semibold text-sm text-slate-800 truncate">{item.medico_nome}</p>
-                            <p className="text-xs text-slate-400">
-                              {item.medico_crm ? `CRM: ${item.medico_crm} · ` : ''}
-                              Adicionado por {item.adicionado_por_nome || 'N/A'} às {new Date(item.criado_em).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              {item.ultimo_envio_em && ` · Último envio: ${new Date(item.ultimo_envio_em).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Contador de pacientes encaminhados */}
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            onClick={() => handleEncaminharRecep(item.id, true)}
-                            disabled={!item.total_encaminhados}
-                            className="w-8 h-8 rounded-lg border border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100 font-bold transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                            title="Desfazer último envio"
-                          >
-                            −
-                          </button>
-                          <div
-                            className="w-11 h-11 rounded-full border-[3px] border-slate-800 text-slate-800 flex items-center justify-center font-bold text-lg"
-                            title="Pacientes encaminhados"
-                          >
-                            {item.total_encaminhados ?? 0}
-                          </div>
-                          <button
-                            onClick={() => handleEncaminharRecep(item.id)}
-                            className="h-11 px-4 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-sm font-semibold flex items-center gap-1.5 transition-colors"
-                            title="Somar um paciente encaminhado"
-                          >
-                            <ArrowRightCircle className="w-4 h-4" /> +1
-                          </button>
-                          <button
-                            onClick={() => handleRemoverFilaRecep(item.id, item.medico_nome)}
-                            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Remover da fila"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
                         </div>
                       </div>
                     ))}

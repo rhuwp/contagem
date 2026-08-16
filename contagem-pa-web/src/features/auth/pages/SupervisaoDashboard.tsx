@@ -95,7 +95,12 @@ export default function SupervisaoDashboard() {
             subtitle={`PA: ${dados?.hospitalGlobal?.medicosAtivos?.pa || 0} | Cont: ${dados?.hospitalGlobal?.medicosAtivos?.contagem || 0} | PA3: ${dados?.hospitalGlobal?.medicosAtivos?.pa3 || 0}`}
             color="emerald"
           />
-          <StatCard title="Cotas de Rodízio" value={dados?.rodizio?.cotasAtivas} subtitle="Abertas neste momento" color="purple" />
+          <StatCard
+            title="Cotas de Rodízio"
+            value={dados?.rodizio?.cotasAtivas}
+            subtitle={`Contagem: ${dados?.rodizio?.cotasPorFila?.contagem ?? 0} · Contagem 3: ${dados?.rodizio?.cotasPorFila?.contagem3 ?? 0}`}
+            color="purple"
+          />
           <StatCard title="Exceções (Furos)" value={dados?.rodizio?.excecoesGeradas} subtitle="Registradas neste dia" color="red" />
           <StatCard title="Pacientes Atendidos" value={dados?.rodizio?.pacientesAtendidos} subtitle="Sistema de Rodízio PA" color="amber" />
         </div>

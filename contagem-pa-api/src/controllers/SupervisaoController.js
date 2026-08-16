@@ -130,10 +130,15 @@ const SupervisaoController = {
         [dataFiltro]
       );
 
-      // Cotas ativas é uma métrica de estado ATUAL (independe da data filtrada)
-      const { rows: [rowCotas] } = await pool.query(
-        "SELECT COUNT(*)::int AS total FROM pedidos_cota WHERE status = 'ABERTO'"
+      // Cotas ativas é uma métrica de estado ATUAL (independe da data filtrada), por fila
+      const { rows: cotasPorFilaRows } = await pool.query(
+        "SELECT fila, COUNT(*)::int AS total FROM pedidos_cota WHERE status = 'ABERTO' GROUP BY fila"
       );
+      const cotasPorFila = { CONTAGEM: 0, CONTAGEM_3: 0 };
+      for (const r of cotasPorFilaRows) {
+        if (cotasPorFila[r.fila] !== undefined) cotasPorFila[r.fila] = r.total;
+      }
+      const totalCotasAbertas = cotasPorFila.CONTAGEM + cotasPorFila.CONTAGEM_3;
 
       const queryExcecoes = `
         SELECT 
@@ -311,7 +316,11 @@ const SupervisaoController = {
       const payload = {
         dataReferencia: dataFiltro,
         rodizio: {
-          cotasAtivas: rowCotas.total,
+          cotasAtivas: totalCotasAbertas,
+          cotasPorFila: {
+            contagem: cotasPorFila.CONTAGEM,
+            contagem3: cotasPorFila.CONTAGEM_3
+          },
           pacientesAtendidos: rowAtendidos.total,
           excecoesGeradas: excecoes.length,
           detalhesExcecoes: excecoes
@@ -386,41 +395,33 @@ const SupervisaoController = {
         ? "((p.criado_em AT TIME ZONE 'America/Sao_Paulo')::date = $1 OR p.status IN ('ABERTO', 'PAUSADO'))"
         : "(p.criado_em AT TIME ZONE 'America/Sao_Paulo')::date = $1";
 
-      const { rows: fila1 } = await pool.query(`
+      // Todas as cotas do dia, das DUAS filas, com contagens de envio normal/exceção
+      const { rows: cotas } = await pool.query(`
         SELECT
-          p.medico_nome, p.quantidade_solicitada, p.quantidade_restante,
+          p.fila, p.medico_nome, p.quantidade_solicitada, p.quantidade_restante,
           p.fila_continua, p.status, u.nome AS secretaria_nome,
           (SELECT COUNT(*)::int FROM encaminhamentos_pa e
-            WHERE e.pedido_cota_id = p.id) AS total_encaminhados
+            WHERE e.pedido_cota_id = p.id AND e.tipo_envio = 'NORMAL') AS encaminhados_normais,
+          (SELECT COUNT(*)::int FROM encaminhamentos_pa e
+            WHERE e.pedido_cota_id = p.id AND e.tipo_envio = 'EXCECAO') AS encaminhados_excecao
         FROM pedidos_cota p
         LEFT JOIN usuarios u ON u.id::text = p.secretaria_id::text
         WHERE ${condFila1}
-        ORDER BY p.criado_em ASC
+        ORDER BY p.fila ASC, p.medico_nome ASC, p.criado_em ASC
       `, [dataFiltro]);
 
-      // fila_recepcao_pa.criado_em é timestamp sem fuso (gravado em hora local)
-      const condFila2 = ehHoje
-        ? "(criado_em::date = $1 OR status = 'ATIVO')"
-        : "criado_em::date = $1";
-
-      const { rows: fila2 } = await pool.query(`
-        SELECT
-          medico_nome, medico_crm, total_encaminhados, status,
-          adicionado_por_nome, removido_por_nome, criado_em, removido_em
-        FROM fila_recepcao_pa
-        WHERE ${condFila2}
-        ORDER BY criado_em ASC
-      `, [dataFiltro]);
-
-      // Furos de fila do dia (histórico completo, qualquer data)
+      // Furos de fila do dia (com a fila de origem, via cota)
       const { rows: excecoes } = await pool.query(`
-        SELECT paciente_identificador, medico_nome, usuario_nome, justificativa, criado_em
-        FROM encaminhamentos_pa
-        WHERE tipo_envio = 'EXCECAO' AND (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = $1
-        ORDER BY criado_em ASC
+        SELECT
+          e.paciente_identificador, e.medico_nome, e.usuario_nome, e.justificativa, e.criado_em,
+          COALESCE(p.fila, 'CONTAGEM') AS fila
+        FROM encaminhamentos_pa e
+        LEFT JOIN pedidos_cota p ON p.id = e.pedido_cota_id
+        WHERE e.tipo_envio = 'EXCECAO' AND (e.criado_em AT TIME ZONE 'America/Sao_Paulo')::date = $1
+        ORDER BY e.criado_em ASC
       `, [dataFiltro]);
 
-      return res.status(200).json({ dataReferencia: dataFiltro, fila1, fila2, excecoes });
+      return res.status(200).json({ dataReferencia: dataFiltro, cotas, excecoes });
     } catch (erro) {
       console.error('Erro ao montar relatório de plantão:', erro);
       return res.status(500).json({ erro: 'Falha ao buscar os dados do relatório.' });

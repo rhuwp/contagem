@@ -115,8 +115,7 @@ export default function LoginPage() {
         {/* Dica para os testes (Ajustada para o novo formato) */}
         <div className="mt-8 pt-6 border-t border-slate-100 text-center text-xs text-slate-400">
           <p className="font-bold mb-1">Nota sobre Credenciais Antigas:</p>
-          <p>Se as contas antigas de teste (ex: admin@ipo.com.br) ainda estiverem na base,</p>
-          <p>você pode usá-las normalmente digitando o e-mail no campo acima.</p>
+          <p>ntigas de teste (ex: admin@ipo.com.br)</p>
           <p className="mt-2 font-bold text-slate-500">Para contas novas: nome.sobrenome</p>
         </div>
       </div>

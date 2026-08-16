@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { api } from '../lib/axios';
 import { useAuthStore } from '../app/store/authStore';
 import { useModalStore } from '../app/store/modalStore';
-import { montarLinhas, type DadosRelatorio } from '../lib/relatorioPlantao';
+import { montarLinhas, resumirPorMedico, NOME_FILA, type DadosRelatorio } from '../lib/relatorioPlantao';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -133,37 +133,30 @@ export default function PassagemPlantao({ obterDados, cor = 'purple' }: Props) {
     ]);
     XLSX.utils.book_append_sheet(wb, abaIndicadores, 'Indicadores');
 
-    const abaFila1 = XLSX.utils.json_to_sheet(
-      d.fila1.length
-        ? d.fila1.map((c: any) => ({
-            Medico: c.medico_nome,
-            'Aberta por': c.secretaria_nome || 'N/A',
-            Tipo: c.fila_continua ? 'Continua' : 'Normal',
-            'Cotas solicitadas': c.fila_continua ? '∞' : c.quantidade_solicitada,
-            'Pacientes encaminhados': c.total_encaminhados || 0,
-            'Vagas restantes': c.fila_continua ? '∞' : c.quantidade_restante,
-            Status: c.status,
-          }))
-        : [{ Aviso: 'Nenhuma cota registrada na data.' }]
-    );
-    XLSX.utils.book_append_sheet(wb, abaFila1, 'Fila 1 - Cotas');
-
-    const abaFila2 = XLSX.utils.json_to_sheet(
-      d.fila2.length
-        ? d.fila2.map((f: any) => ({
-            Medico: f.medico_nome,
-            CRM: f.medico_crm || '',
-            'Pacientes encaminhados': f.total_encaminhados || 0,
-            'Adicionado por': f.adicionado_por_nome || 'N/A',
-            Situacao: f.status === 'ATIVO' ? 'Na fila' : `Removido${f.removido_por_nome ? ` por ${f.removido_por_nome}` : ''}`,
-          }))
-        : [{ Aviso: 'Nenhum medico passou pela fila da recepcao na data.' }]
-    );
-    XLSX.utils.book_append_sheet(wb, abaFila2, 'Fila 2 - Recepcao');
+    // Uma aba por fila, com o RESUMO por médico (dados agregados, sem bagunça)
+    for (const fila of ['CONTAGEM', 'CONTAGEM_3']) {
+      const resumo = resumirPorMedico(d.cotas, fila);
+      const aba = XLSX.utils.json_to_sheet(
+        resumo.length
+          ? resumo.map((r) => ({
+              Medico: r.medico,
+              'Pedidos (cotas)': r.pedidos,
+              'Vagas solicitadas': r.continua
+                ? (r.vagas > 0 ? `${r.vagas} + continua` : 'Continua (sem limite)')
+                : r.vagas,
+              'Encaminhados (rodizio)': r.encaminhados,
+              'Por excecao': r.excecoes,
+              'Total de pacientes': r.encaminhados + r.excecoes,
+            }))
+          : [{ Aviso: 'Nenhum pedido registrado na data.' }]
+      );
+      XLSX.utils.book_append_sheet(wb, aba, `Fila ${NOME_FILA[fila]}`);
+    }
 
     const abaExcecoes = XLSX.utils.json_to_sheet(
       d.excecoes.length
         ? d.excecoes.map((e: any) => ({
+            Fila: NOME_FILA[e.fila] || e.fila,
             Hora: new Date(e.criado_em).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             Paciente: e.paciente_identificador,
             'Medico acionado': e.medico_nome || 'N/A',

@@ -3,9 +3,10 @@ const pool = require('../config/databasePg');
 const FilaController = {
   // FLUXO NORMAL
   async encaminharPaciente(req, res) {
-    const { paciente_identificador } = req.body;
+    const { paciente_identificador, fila } = req.body;
     // SEGURANÇA: o operador é identificado pelo token, não pelo body (evita log forjado)
     const usuario_pa_id = req.usuarioLogado.id;
+    const filaDestino = ['CONTAGEM', 'CONTAGEM_3'].includes(fila) ? fila : 'CONTAGEM';
 
     if (!paciente_identificador) {
       return res.status(400).json({ erro: 'Identificação do paciente ausente.' });
@@ -25,12 +26,12 @@ const FilaController = {
       const queryBusca = `
         SELECT id, medico_id, medico_nome, quantidade_restante, fila_continua
         FROM pedidos_cota
-        WHERE status = 'ABERTO' AND (fila_continua = TRUE OR quantidade_restante > 0)
+        WHERE status = 'ABERTO' AND fila = $1 AND (fila_continua = TRUE OR quantidade_restante > 0)
         ORDER BY ultimo_encaminhamento_em ASC NULLS FIRST, criado_em ASC
         LIMIT 1
         FOR UPDATE;
       `;
-      const { rows } = await client.query(queryBusca);
+      const { rows } = await client.query(queryBusca, [filaDestino]);
 
       if (rows.length === 0) {
         await client.query('ROLLBACK');
